@@ -1,4 +1,4 @@
-vendor
+.idea/
 var
 public/router.php
 vendor
@@ -10,3 +10,5 @@ mix-manifest.json
 dev/docker-data/
 src/themes/BaseV1/assets/css/main.css
 src/themes/BaseV1/assets/css/main.css.map
+.env
+*.css.map

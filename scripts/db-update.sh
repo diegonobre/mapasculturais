@@ -1,15 +1,16 @@
 #!/bin/bash
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+DIR=/var/www/scripts
 CDIR=$( pwd )
 cd $DIR
 
-if [[ $1 ]]; then
+if [ $1 ]; then
     DOMAIN=$1;
 else
     DOMAIN="localhost";
 fi
 
-if [[ $2 ]]; then
+if [ $2 ]; then
     SAVE_LOG=$2;
 else
     SAVE_LOG=0;

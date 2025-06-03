@@ -31,4 +31,4 @@ services:
       - POSTGRES_USER=mapas
       - POSTGRES_DB=mapas
     volumes:
-      - ../db/db-test.sql:/docker-entrypoint-initdb.d/db.sql
+      - ../db/dump.sql:/docker-entrypoint-initdb.d/db.sql

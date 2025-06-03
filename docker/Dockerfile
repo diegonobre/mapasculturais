@@ -3,10 +3,10 @@ FROM php:8.2-fpm
 RUN apt-get update
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        locales less vim nano micro sudo git zip procps \
-        imagemagick libmagickcore-dev libmagickwand-dev \
-        curl iputils-ping ca-certificates  gnupg \
-        libcurl4-gnutls-dev libpq-dev libfreetype6-dev libjpeg62-turbo-dev libpng-dev libzip-dev libzstd-dev
+    locales less vim nano micro sudo git zip procps \
+    imagemagick libmagickcore-dev libmagickwand-dev \
+    curl iputils-ping ca-certificates  gnupg \
+    libcurl4-gnutls-dev libpq-dev libfreetype6-dev libjpeg62-turbo-dev libpng-dev libzip-dev libzstd-dev
 
 
 RUN mkdir -p /etc/apt/keyrings
@@ -22,11 +22,11 @@ ENV PATH=$PATH:/root/.local/share/pnpm
 
 # Install uglify and terser
 RUN npm install -g \
-        terser \
-        uglifycss \
-        autoprefixer \
-        postcss \
-        sass
+    terser \
+    uglifycss \
+    autoprefixer \
+    postcss \
+    sass
 
 # Install extensions
 RUN docker-php-ext-install -j$(nproc) opcache pdo_pgsql  zip  xml  curl
@@ -77,6 +77,7 @@ COPY src /var/www/src
 COPY var /var/www/var
 
 WORKDIR /var/www/src/
+ENV CI=true
 RUN pnpm install && pnpm run build
 
 RUN sass themes/BaseV1/assets/css/sass/main.scss:themes/BaseV1/assets/css/main.css

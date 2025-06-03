@@ -1,6 +1,6 @@
 #!/bin/bash
 
-DOMAIN="localhost"
+DOMAIN=$1
 MODE="production"
 
 for i in "$@"
@@ -25,7 +25,8 @@ esac
 done
 
 
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+#DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+DIR=/var/www/scripts
 CDIR=$( pwd )
 cd $DIR
 
@@ -41,11 +42,11 @@ else
 	composer="composer"
 fi
 
-if [[ $MODE == 'development' ]]; then
-	$composer install --prefer-dist 
-else
+#if [ $MODE == 'development' ]; then
+#	$composer install --prefer-dist 
+#else
 	$composer install --prefer-dist --no-dev
-fi;
+#fi;
 
 
 $composer dump-autoload --optimize
@@ -53,7 +54,6 @@ $composer dump-autoload --optimize
 cd src/tools
 
 HTTP_HOST=$DOMAIN REQUEST_METHOD='CLI' REMOTE_ADDR='127.0.0.1' REQUEST_URI='/' SERVER_NAME=127.0.0.1 SERVER_PORT="8000" ./doctrine orm:generate-proxies
-
 
 cd $DIR
 ./compile-sass.sh
