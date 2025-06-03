@@ -59,13 +59,14 @@ app.component('opportunity-evaluations-table', {
         headers () {
             let itens = [
                 { text: __('inscrição', 'opportunity-evaluations-table'), value: "number", slug: "number", sticky: true, width: '160px' },
-                { text: __('avaliador', 'opportunity-evaluations-table'), value: "valuer.name", slug: "evaluator", visible: true},
-                { text: __('resultado final', 'opportunity-evaluations-table'), value: "evaluation.resultString", slug: "result"},
-                { text: __('estado', 'opportunity-evaluations-table'), value: "evaluation.status", slug: "status"},
+                { text: __('avaliador', 'opportunity-evaluations-table'), value: "valuer?.name", slug: "evaluator", visible: true},
+                { text: __('resultado final', 'opportunity-evaluations-table'), value: "evaluation?.resultString", slug: "result"},
+                { text: __('estado', 'opportunity-evaluations-table'), value: "evaluation?.status", slug: "status"},
             ];
 
             if(this.avaliableEvaluationFields('agentsSummary')) {
-                itens.splice(2, 0, { text: __('agente', 'opportunity-evaluations-table'), value: "owner.name", slug: "agent"});
+                itens.splice(2, 0, { text: __('agente', 'opportunity-evaluations-table'), value: "agentsData.owner?.name", slug: "agent"});
+                itens.splice(2, 0, { text: __('coletivo', 'opportunity-evaluations-table'), value: "agentsData.coletivo?.name", slug: "coletivo"});
             }
 
             return itens;

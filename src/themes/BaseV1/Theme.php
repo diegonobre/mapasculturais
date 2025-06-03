@@ -1547,6 +1547,7 @@ class Theme extends MapasCulturais\Theme {
             $this->jsObject['entity']['object']->id = $current_registration->id;
             $this->jsObject['entity']['object']->opportunity = $current_registration->opportunity;
             $this->jsObject['entity']['canUserEvaluate'] = $current_registration->canUser('evaluate');
+            $this->jsObject['entity']['evaluateOnTime'] = $current_registration->canUser('evaluateOnTime');
             $this->jsObject['entity']['canUserModify'] = $current_registration->canUser('modify');
             $this->jsObject['entity']['canUserSend'] = $current_registration->canUser('send');
             $this->jsObject['entity']['canUserViewUserEvaluations'] = $current_registration->canUser('viewUserEvaluations');
@@ -2151,7 +2152,8 @@ class Theme extends MapasCulturais\Theme {
             'fieldsDisabled' => i::__('Atenção, você tentou marcar campos que estão debilitados por algum tipo de condicional ou vinculado a alguma categoria, verifique se todos foram que deseja marcar foram marcados corretamente'),
             'providingAccount' => i::__('Ao enviar a prestação de contas, não será mais permitido editar os campos. tem certeza que deseja continuar?'),
             'disableColumns' => i::__('Não é permitido desabilitar todas as colunas da tabela'),
-            'columnDisabling' => i::__('Não é permitido desabilitar a coluna')
+            'columnDisabling' => i::__('Não é permitido desabilitar a coluna'),
+            'fileTooBig' => i::__('O tamanho do arquivo excede o limite estabelecido')
         ]);
 
         $this->enqueueScript('app', 'entity.module.subsiteAdmins', 'js/ng.entity.module.subsiteAdmins.js', array('ng-mapasculturais'));
@@ -2767,6 +2769,7 @@ class Theme extends MapasCulturais\Theme {
         $this->jsObject['entity']['spaceData'] = $entity->getSpaceData();
 
         $this->jsObject['entity']['canUserEvaluate'] = $entity->canUser('evaluate');
+        $this->jsObject['entity']['evaluateOnTime'] = $entity->canUser('evaluateOnTime');
         $this->jsObject['entity']['canUserModify'] = $entity->canUser('modify');
         $this->jsObject['entity']['canUserSend'] = $entity->canUser('send');
         $this->jsObject['entity']['canUserViewUserEvaluations'] = $entity->canUser('viewUserEvaluations');

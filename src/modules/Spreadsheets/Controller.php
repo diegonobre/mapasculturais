@@ -70,7 +70,8 @@ class Controller extends \MapasCulturais\Controller
         unset($query['@limit']);
         unset($query['@page']);
         
-        if($select = $this->data['@select']) {
+        if(isset($this->data['@select'])) {
+            $select = $this->data['@select'];
             unset($query['@select']);
             $query['@select'] = $select;
         }
@@ -123,15 +124,23 @@ class Controller extends \MapasCulturais\Controller
 
         $job_slug = "{$owner->evaluationMethod->slug}-spreadsheets";
 
+        $query = $this->data['query'];
+
+        unset($query['@limit']);
+        unset($query['@page']);
+        
+        if($select = $this->data['@select']) {
+            unset($query['@select']);
+            $query['@select'] = $select;
+        }
+
         if($job_type = $app->getRegisteredJobType($job_slug)) {
             $app->enqueueOrReplaceJob($job_slug, [
                 'owner' => $owner,
                 'authenticatedUser' => $app->user,
                 'extension' => $extension,
                 'entityClassName' => RegistrationEvaluation::class,
-                'query' => [
-                    '@select' => $this->data['@select'] ?? 'id,name',
-                ]
+                'query' => $query
             ]);
 
             $this->json(true);

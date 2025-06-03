@@ -16,6 +16,7 @@ $this->import('
     complaint-suggestion
     entity-admins
     entity-actions
+    entity-file
     entity-files-list
     entity-gallery
     entity-gallery-video
@@ -35,7 +36,6 @@ $this->import('
     opportunity-evaluations-tab
     opportunity-phase-evaluation
     opportunity-phases-timeline
-    opportunity-rules
     opportunity-subscription
     opportunity-subscription-list
     opportunity-owner-type
@@ -81,7 +81,8 @@ $this->breadcrumb = [
                             <h3><?= i::__("Apresentação") ?></h3>
                             <p class="description" v-html="entity.longDescription"></p>
                         </div>
-                        <opportunity-rules :entity="entity" classes="col-12" title="<?php i::esc_attr_e('Regulamento'); ?>"></opportunity-rules>
+                        
+                        <entity-file :entity="entity" group-name="rules" classes="col-12" title="<?php i::esc_attr_e('Regulamento'); ?>"></entity-file>
                         <entity-files-list :entity="entity" classes="col-12" group="downloads" title="<?php i::esc_attr_e('Arquivos para download');?>"></entity-files-list>
                         <entity-links :entity="entity" classes="col-12" title="<?php i::_e('Links'); ?>"></entity-links>
                         <entity-gallery-video :entity="entity" classes="col-12"></entity-gallery-video>
@@ -90,7 +91,7 @@ $this->breadcrumb = [
                 </main>
                 <aside>
                     <div class="grid-12">
-                        <opportunity-phases-timeline class="col-12"></opportunity-phases-timeline>
+                        <opportunity-phases-timeline :entity-status='entity.status' class="col-12"></opportunity-phases-timeline>
                         <div v-if="entity.files.rules" class="col-12">
                             <a :href="entity.files.rules.url" class="button button--primary-outline" target="_blank"><?= i::__("Baixar regulamento") ?></a>
                         </div>

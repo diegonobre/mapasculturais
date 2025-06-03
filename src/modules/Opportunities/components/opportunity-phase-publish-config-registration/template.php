@@ -22,7 +22,7 @@ $this->import('
                 <?= i::__('Fique atento! A publicação do resultado é opcional e só pode ser feita após o término da fase. <strong>Esta ação deixará público o nome e o número de inscrição das pessoas inscritas.</strong>') ?>
             </mc-alert>
             <div v-if="!phase.isLastPhase" :class="[{'col-5 opportunity-phase-publish-config-registration__left': !phase.isLastPhase}]">
-                    <div v-if="phase.publishedRegistrations" class="msg-auto-pub col-4">
+                    <div v-if="phase.publishedRegistrations && (!phase.isContinuousFlow || (phase.isContinuousFlow && phase.hasEndDate))" class="msg-auto-pub col-4">
                         <p class="bold"><?= i::__('O resultado já foi publicado') ?></p>
                     </div>
                     <div v-else-if="phase.publishTimestamp" class="msgpub-date" :class="[{'col-4': !phase.isLastPhase},]">
@@ -71,7 +71,7 @@ $this->import('
                 </div> 
                 
                 <div v-if="phase.isLastPhase" :class="[{'col-12': phase.isLastPhase}]">
-                        <div v-if="phase.publishedRegistrations" class="msg-auto-pub col-4">
+                        <div v-if="phase.publishedRegistrations && (!firstPhase.isContinuousFlow || (firstPhase.isContinuousFlow && firstPhase.hasEndDate))" class="msg-auto-pub col-4">
                             <p class="bold"><?= i::__('O resultado já foi publicado') ?></p>
                         </div>
                         <div v-else-if="phase.publishTimestamp" class="msgpub-date" :class="[{'col-4': !phase.isLastPhase},]">
@@ -94,14 +94,14 @@ $this->import('
                             <p class="bold"><?= i::__('O resultado será publicado automaticamente') ?></p>
                         </div>
                         <div v-else class="col-4">
-                            <p class="bold"><?= i::__("A publicação do resultado é opcional.") ?></p>
+                            <p v-if="phase.publishedRegistrations && (!firstPhase.isContinuousFlow || (firstPhase.isContinuousFlow && firstPhase.hasEndDate))"class="bold"><?= i::__("A publicação do resultado é opcional.") ?></p>
                         </div>
                 </div>
                 <div v-if="!phase.publishedRegistrations" :class="[{'col-12 grid-12': !phase.isLastPhase}, {'opportunity-phase-publish-config-registration__unpublishlist col-6': phase.isLastPhase}]">
                     <div class="opportunity-phase-publish-config-registration__button " :class="{'col-6': !phase.isLastPhase}">
                         <mc-confirm-button  yes="<?= i::__('Publicar Resultado')?>" @confirm="publishRegistration()">
                             <template #button="modal">
-                                <button  :class="['button', 'button--primary', {'button--large col-6': !phase.isLastPhase}, {'disabled': !firstPhase.status >0}, {'button--bg': phase.isLastPhase}, {'disabled': isOpenPhase}]" @click="modal.open()">
+                                <button  :class="['button', 'button--primary', {'button--large col-6': !phase.isLastPhase}, {'button--bg': phase.isLastPhase}, {'disabled': isOpenPhase}]" @click="modal.open()">
                                     <?= i::__("Publicar Resultados") ?>
                                 </button>
                             </template>
@@ -115,7 +115,7 @@ $this->import('
                         </mc-confirm-button>
                     </div>
                 </div>
-                <div v-if="phase.publishedRegistrations" class="published">
+                <div v-if="phase.publishedRegistrations && (!firstPhase.isContinuousFlow || (firstPhase.isContinuousFlow && firstPhase.hasEndDate))" class="published">
                     <div class="col-4">
                         <mc-confirm-button :message="text('despublicar')" @confirm="unpublishRegistration()">
                             <template #button="modal">

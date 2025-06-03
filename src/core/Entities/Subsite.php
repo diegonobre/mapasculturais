@@ -181,11 +181,16 @@ class Subsite extends \MapasCulturais\Entity
         return $this->getSingleUrl();
     }
 
-    public function getSubsiteUrl() {
-        $app = \MapasCulturais\App::i();
-        $uri = $app->request->psr7request->getUri();
-        return $uri->getScheme() . "://" . $this->url;
+    /**
+     * Retorna a URL base da instalação
+     * 
+     * @return string
+     */
+    public function getSubsiteUrl(): string {
+        $protocol = $_SERVER['REQUEST_SCHEME'] ?? 'http';
+        return "{$protocol}://{$this->url}/";
     }
+
 
     protected $_logo;
 
@@ -312,10 +317,13 @@ class Subsite extends \MapasCulturais\Entity
             });
         }
 
-        $app->hook("ApiQuery(<<project|opportunity>>).params", function(&$api_params) use($subsite_id, $app) {
-            $api_params['_subsiteId'] = API::EQ($subsite_id);
-        });
-
+        foreach(['project', 'opportunity', 'space', 'agent', 'event'] as $entity_type){
+            if($this->{"filter_subsite_{$entity_type}"} ?: false){
+                $app->hook("ApiQuery({$entity_type}).params", function(&$api_params) use($subsite_id, $app) {
+                    $api_params['_subsiteId'] = API::EQ($subsite_id);
+                });
+            }
+        }
 
         $app->applyHookBoundTo($this, 'subsite.applyFilters:after');
     }
@@ -391,7 +399,7 @@ class Subsite extends \MapasCulturais\Entity
             $app->config['app.enabled.opportunities'] = false;
         }
 
-        $app->applyHookBoundTo($this, 'subsite.applyConfigurations:after', ['config' => &$config]);
+        $app->applyHookBoundTo($this, 'subsite.applyConfigurations:after', ['config' => &$app->config]);
 
     }
 

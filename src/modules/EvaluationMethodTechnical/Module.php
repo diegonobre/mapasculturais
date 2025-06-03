@@ -17,6 +17,8 @@ class Module extends \MapasCulturais\EvaluationMethod {
     protected static Module $instance;
     private $viability_status;
 
+    public static $quotaData = null;
+
     function __construct(array $config = []) {
         self::$instance = $this;
         $config += ['step' => '0.1'];
@@ -55,17 +57,16 @@ class Module extends \MapasCulturais\EvaluationMethod {
         $result = [];
 
         $non_numeric = [];
-        if($max_value){
-            for($i=0;$i<5;$i++){
-                $min = $i * $max_value / 5;
-                $max = ($i+1) * $max_value / 5;
-                foreach($data as $val => $sum) {
-                    if(!is_numeric($val)) {
-                        $non_numeric[$val] = $non_numeric[$val] ?? 0;
-                        $non_numeric[$val] += $sum;
-
-                    } else if($val >= $min && $val < $max) {
-
+        foreach($data as $val => $sum) {
+            if(!is_numeric($val)) {
+                $non_numeric[$val] = $non_numeric[$val] ?? 0;
+                $non_numeric[$val] += $sum;
+            
+            } else if($max_value) {
+                for($i=0;$i<5;$i++){
+                    $min = $i * $max_value / 5;
+                    $max = ($i+1) * $max_value / 5;
+                    if($val >= $min && $val < $max) {
                         $min = number_format($i * $max_value / 5,       1, ',', '.');
                         $max = number_format(($i+1) * $max_value / 5,   1, ',', '.');
 
@@ -78,7 +79,6 @@ class Module extends \MapasCulturais\EvaluationMethod {
         }
 
         $result += $non_numeric;
-        
         return $result;
     }
 
@@ -245,106 +245,6 @@ class Module extends \MapasCulturais\EvaluationMethod {
         $app->view->jsObject['angularAppDependencies'][] = 'ng.evaluationMethod.technical';
     }
 
-    function getRegistrationRegion($registration, $geo_quota_config, Opportunity $first_phase) {
-        $app = App::i();
-
-        /** @var Opportunity $first_phase */
-        $opportunity_proponent_types = $first_phase->registrationProponentTypes;
-        $proponent_types2agents_map = $app->config['registration.proponentTypesToAgentsMap'];
-        
-        $proponent_type = $registration->proponentType;
-
-        if(!$opportunity_proponent_types) {
-            $agent_data = $registration->agentsData['owner'];
-        } else {
-            $agent_key = $proponent_types2agents_map[$proponent_type] ?? null;
-            $agent_data = $registration->agentsData[$agent_key] ?? null;
-        }
-
-        // ISSO NÃO DEVERIA SER POSSÍVEL
-        if(!$agent_data) {
-            $agent_data = $registration->agentsData['owner'];
-        }
-
-        $meta = $geo_quota_config->geoDivision;
-        $region =  $agent_data[$meta] ?? '';
-
-        if(isset($geo_quota_config->distribution->$region)) {
-            return $region;
-        } else {
-            return 'OTHERS';
-        }
-    }
-
-    function getAffirmativePoliciesFields($quota_config, $geo_quota_config) {
-        $fields = ['appliedForQuota'];
-
-        foreach($quota_config->rules as $rule) {
-            foreach($rule->fields as $field) {
-                $fields[] = $field->fieldName;
-            }
-        }
-
-        return array_values(array_unique($fields));
-    }
-
-    function getTiebreakerConfigurationFields($tiebreaker_config) {
-        $fields = [];
-
-        foreach($tiebreaker_config as $rule) {
-            if(str_starts_with($rule->criterionType, 'field_' ) ) {
-                $fields[] = $rule->criterionType;
-            } else {
-                // @TODO colocar o metadado que salvará a consolidação da avaliação técnica
-            }
-        }
-
-        return array_values(array_unique($fields));
-    }
-
-    function getRegistrationsForQuotaSorting(Opportunity $phase_opportunity, $fields, $params = null) {
-        $app = App::i();
-        if($params) {
-            unset(
-                $params['@select'], 
-                $params['@order'], 
-                $params['@limit'], 
-                $params['@page'],
-                $params['opportunity'],
-            );
-        } else {
-            $params = [];
-        }
-        
-        $cache_key = "$phase_opportunity:quota-registrations:" . md5(serialize($params));
-        
-        if(false && $app->config['app.useQuotasCache'] && $app->cache->contains($cache_key)){
-            return $app->cache->fetch($cache_key);
-        }
-
-        $result = $app->controller('opportunity')->apiFindRegistrations($phase_opportunity, [
-            '@select' => implode(',', ['number,range,proponentType,agentsData,consolidatedResult,eligible,score', ...$fields]),
-            '@order' => 'score DESC',
-            '@quotaQuery' => true,
-            ...$params
-        ]);
-
-        $registrations = array_map(function ($reg) {
-            return (object) $reg; 
-        }, $result->registrations);
-
-        if($app->config['app.useQuotasCache']){
-            $app->cache->save($cache_key, $registrations, $app->config['app.quotasCache.lifetime']);
-        }
-
-        return $registrations;
-    }
-
-    protected function generateRuleId($rule) {
-        $app = App::i();
-        return isset($rule->title) ? $app->slugify($rule->title) : md5(json_encode($rule));
-    }
-
     public function _init() {
         $app = App::i();
 
@@ -484,74 +384,126 @@ class Module extends \MapasCulturais\EvaluationMethod {
            
         });
 
-
-        $quota_data = null;
-
-        $app->hook('ApiQuery(registration).params', function(&$params) use($app, $self, &$quota_data) {
+        $app->hook('ApiQuery(registration).params', function(&$params) use($app) {
             /** @var ApiQuery $this */
 
             $order = $params['@order'] ?? '';
             preg_match('#EQ\((\d+)\)#', $params['opportunity'] ?? '', $matches);
             $phase_id = $matches[1] ?? null;
-            if($phase_id && str_starts_with(strtolower(trim($order)), '@quota')){
+            if(!$phase_id) {
+                return;
+            }
+            $opportunity = $app->repo('Opportunity')->find($phase_id);
+            $evaluation_method = $opportunity->evaluationMethodConfiguration;
+            $quota = $evaluation_method && $evaluation_method->type->id == 'technical' ? 
+                Quotas::instance($phase_id) : null;
+            
+            if($phase_id && $quota && is_null(Module::$quotaData)) {
+                Module::$quotaData = (object) [];                
 
-                if(is_null($quota_data)) {
-                    $quota_data = (object) [];
-                } else {
-                    return;
-                }
+                Module::$quotaData->objectId = spl_object_id($this);
+                Module::$quotaData->params = $params;
+                Module::$quotaData->quota = $quota;
+                Module::$quotaData->orderByQuota = $order == '@quota';
 
-                $quota_data->objectId = spl_object_id($this);
-                $quota_data->params = $params;
-                $quota_data->quota = new Quotas($phase_id);
-
-                unset($params['@order']);
-                $quota_order = $quota_data->quota->getRegistrationsOrderByScoreConsideringQuotas($params);
+                $quota_order = Module::$quotaData->quota->getRegistrationsOrderByScoreConsideringQuotas($params);
                 $opportunity = $app->repo('Opportunity')->find($phase_id);
                 $opportunity->registerRegistrationMetadata();
+                
+                if(Module::$quotaData->orderByQuota && $limit = (int) ($params['@limit'] ?? 0)) {
+                    unset($params['@order']);
+                    $ids_params = $params;
+                    unset(
+                        $ids_params['@limit'], 
+                        $ids_params['@order'], 
+                        $ids_params['@page'],
+                        $ids_params['oppotunity'],
+                    );
+                    $ids_params['@select'] = 'id';
 
-                $ids = array_map(function($reg) { return $reg->id; }, $quota_order);
-                if($limit = (int) ($params['@limit'] ?? 0)) {
+                    /** @var ControllersOpportunity $opportunity_controller */
+                    $opportunity_controller = $app->controller('opportunity');
+                    $result = $opportunity_controller->apiFindRegistrations($opportunity, $ids_params);
+                    $_ids = [];
+                    foreach($result->registrations as $reg) {
+                        $_ids[$reg['id']] = $reg['id'];
+                    }
+
+                    $ids = [];
+                    foreach($quota_order as $reg) {
+                        if(isset($_ids[$reg->id])) {
+                            $ids[] = $reg->id;
+                        }
+                    }
+
+                    Module::$quotaData->foundIds = $ids;
+
                     $page = $params['@page'] ?? 1;
                     $offset = ($page - 1) * $limit;
                     $ids = array_slice($ids, $offset, $limit);
-                    unset($params['@page'], $params['@limit']);
+                    // eval(\psy\sh());
+                    
+                } else {
+                    $ids = array_map(fn($reg) => $reg->id, $quota_order);
+                    Module::$quotaData->foundIds = $ids;
                 }
 
-                $params['id'] = API::IN($ids);
+                if(Module::$quotaData->orderByQuota){
+                    
+                    $params['id'] = API::IN($ids);
+                    unset(
+                        $params['@page'],
+                        $params['@limit']
+                    );
+                }
 
-                $quota_data->order = $quota_order;
-                $quota_data->ids = $ids;
+                Module::$quotaData->order = $quota_order;
+                Module::$quotaData->ids = $ids;
+
             }
         });
 
-        $app->hook('ApiQuery(registration).findResult', function(&$result) use(&$quota_data) {
+        $app->hook('ApiQuery(registration).findResult', function(&$result) {
             /** @var ApiQuery $this */
-            if(($quota_data->objectId ?? false) == spl_object_id($this)) {
+            if((Module::$quotaData->objectId ?? false) == spl_object_id($this)) {
+                $app = App::i();
                 $_new_result = [];
-                $quota_fields = $quota_data->quota->registrationFields;
-                foreach($quota_data->ids as $id) {
-                    foreach($result as $registration) {
+                $quota_fields = Module::$quotaData->quota->registrationFields;
+                foreach(Module::$quotaData->ids as $id) {
+                    foreach($result as &$registration) {
                         if($registration['id'] == $id) {
-                            $_new_result[] = array_merge($registration, $quota_fields[$id] ?? []);
+                            $registration = array_merge($registration, $quota_fields[$id] ?? []);
+                            $_new_result[] = $registration;
                         }
                     }
                 }
-                $result = $_new_result;
-                $quota_data->result = $result;
+
+                if(Module::$quotaData->orderByQuota) {
+                    $result = $_new_result;
+                }
+
+                Module::$quotaData->result = $result;
             }
         });
 
-        $app->hook('ApiQuery(registration).countResult', function(&$result) use(&$quota_data) {
-            if(($quota_data->objectId ?? false) == spl_object_id($this)) {
-                $result = count($quota_data->order);
+        $app->hook('ApiQuery(registration).countResult', function(&$result) {
+            if((Module::$quotaData->objectId ?? false) == spl_object_id($this)) {
+                $result = count(Module::$quotaData->foundIds);
             }
         });
-
-        $app->hook('API.find(registration).result', function() use($quota_data) {
+        
+        
+        $app->hook('API.findRegistrations(opportunity).result', function() {
             /** @var Controller $this */
-            if(($quota_data->objectId ?? false) == spl_object_id($this)) {
-                $this->apiAddHeaderMetadata($quota_data->params, $quota_data->result, count($quota_data->order));
+            $params = $this->data;
+            
+            if(Module::$quotaData && isset($params['@opportunity'])) {
+                $params['opportunity'] = API::EQ($params['@opportunity']);
+
+                $count_query = new ApiQuery(Registration::class, Module::$quotaData->params);
+                $count = $count_query->count();
+                
+                $this->apiAddHeaderMetadata(Module::$quotaData->params, Module::$quotaData->result, $count);
             }
         });
 
@@ -968,19 +920,16 @@ class Module extends \MapasCulturais\EvaluationMethod {
         return $errors;
     }
 
-    public function _getConsolidatedResult(\MapasCulturais\Entities\Registration $registration) {
-        $app = App::i();
-        $status = [ \MapasCulturais\Entities\RegistrationEvaluation::STATUS_EVALUATED,
-            \MapasCulturais\Entities\RegistrationEvaluation::STATUS_SENT
-        ];
+    public function _getConsolidatedResult(\MapasCulturais\Entities\Registration $registration, array $evaluations) {
+        if(empty($evaluations)){
+            return 0;
+        }
 
         $committee = $registration->opportunity->getEvaluationCommittee();
         $users = [];
         foreach ($committee as $item) {
             $users[] = $item->agent->user->id;
         }
-
-        $evaluations = $app->repo('RegistrationEvaluation')->findByRegistrationAndUsersAndStatus($registration, $users, $status);
 
         $result = 0;
         foreach ($evaluations as $eval){
@@ -1177,7 +1126,7 @@ class Module extends \MapasCulturais\EvaluationMethod {
         return $total;
     }
 
-    public function valueToString($value) {
+    protected function _valueToString($value) {
         if(is_null($value)){
             return i::__('Avaliação incompleta');
         } else {
@@ -1266,10 +1215,6 @@ class Module extends \MapasCulturais\EvaluationMethod {
         ];
     }
 
-    public function fetchRegistrations() {
-        return true;
-    }
-
     private function viabilityLabel($evaluation) {
         if (isset($evaluation->evaluationData->viability)) {
             $viability = $evaluation->evaluationData->viability;
@@ -1278,5 +1223,13 @@ class Module extends \MapasCulturais\EvaluationMethod {
         }
 
         return '';
+    }
+
+    public function useCommitteeGroups(): bool {
+        return false;
+    }
+
+    public function evaluateSelfApplication(): bool {
+        return false;
     }
 }

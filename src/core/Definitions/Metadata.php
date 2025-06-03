@@ -96,6 +96,8 @@ class Metadata extends \MapasCulturais\Definition{
 
     public bool $readonly = false;
 
+    public bool $sensitive = false;
+
     /**
      * Creates a new Metadata Definition.
      *
@@ -136,6 +138,9 @@ class Metadata extends \MapasCulturais\Definition{
         $this->available_for_opportunities = key_exists('available_for_opportunities', $config) ? $config['available_for_opportunities'] : false;
 
         $this->field_type = key_exists('field_type', $config) ? $config['field_type'] : $this->type;
+        
+        $this->sensitive = $config['sensitive'] ?? false;
+
 
         if ($this->field_type === 'string') {
             $this->field_type = 'text'; 
@@ -188,6 +193,25 @@ class Metadata extends \MapasCulturais\Definition{
                 if(is_null($value)) { return null; }
                 return json_encode($value);
             },
+            'object' => function ($value) {
+                if($value) {
+                    $value = (object) $value;
+                }
+                return json_encode($value);
+            },
+            'array' => function ($value) {
+                if($value) {
+                    $value = (array) $value;
+                }
+                return json_encode($value);
+            },
+            'entity' => function($value) {
+                if ($value instanceof \MapasCulturais\Entity) {
+                    return (string) $value;
+                } else {
+                    return null;
+                }
+            },
             'DateTime' => function ($value) {
                 if(is_null($value)) { return null; }
                 if ($value instanceof DateTime) {
@@ -199,6 +223,17 @@ class Metadata extends \MapasCulturais\Definition{
                 }
             },
             'multiselect' => function($value){
+                $value = (array) $value;
+                $value = array_filter($value);
+                return json_encode($value);
+            },
+            'location' => function($value) {
+                return json_encode($value);
+            },
+            'bankFields' => function($value){
+                return json_encode($value);
+            },
+            'municipio' => function($value) {
                 return json_encode($value);
             }
         ];
@@ -213,6 +248,7 @@ class Metadata extends \MapasCulturais\Definition{
     }
 
     function getDefaultUnserializer() {
+        $app = App::i();
         $unserializers = [
             'boolean' => function($value) {
                 return is_null($value) ? null : (bool) $value;
@@ -229,7 +265,30 @@ class Metadata extends \MapasCulturais\Definition{
             'number' => function($value) {
                 return is_null($value) ? null : (float) $value;
             },
+            'location' => function($value) {
+                return is_null($value) ? null : json_decode($value);
+            },
+            'municipio' => function($value) {
+                return is_null($value) ? null : json_decode($value);
+            },
             'json' => function($value) {
+                return is_null($value) ? null : json_decode($value);
+            },
+            'object' => function($value) {
+                return is_null($value) ? null : (object) json_decode($value);
+            },
+            'array' => function($value) {
+                return is_null($value) ? null : (array) json_decode($value);
+            },
+            'entity' => function($value) use ($app) {
+                if (is_string($value) && preg_match('#^((\\\?[a-z]\w*)+):(\d+)$#i', $value, $matches)) {
+                    $class = $matches[1];
+                    $id = $matches[3];
+                    return $app->repo($class)->find($id);
+                }
+                return is_null($value) ? null : (array) json_decode($value);
+            },
+            'bankFields' => function($value) {
                 return is_null($value) ? null : json_decode($value);
             },
             'DateTime' => function($value) {
@@ -240,11 +299,15 @@ class Metadata extends \MapasCulturais\Definition{
                 }
             },
             'multiselect' => function($value){
-                $result = is_null($value) ? null : json_decode($value, true);
+                $result = is_null($value) ? [] : json_decode($value, true);
 
                 if($value && !is_array($result) && ($temp_result = explode(';', $value))) {
                     $result = $temp_result;
                 }
+
+                $result = array_filter($result, function($v){
+                    return !is_null($v) && $v !== 'null';
+                });
 
                 return $result;
             }

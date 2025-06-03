@@ -28,6 +28,10 @@ app.component('opportunity-evaluations-list', {
         this.getEvaluations();
         window.addEventListener('previousEvaluation', this.previousEvaluation);
         window.addEventListener('nextEvaluation', this.nextEvaluation);
+        window.addEventListener('responseEvaluation', this.handleEvaluationResponse);
+    },
+    beforeDestroy() {
+        window.removeEventListener('responseEvaluation', this.handleEvaluationResponse);
     },
     data() {
         return {
@@ -117,13 +121,18 @@ app.component('opportunity-evaluations-list', {
             if (this.onlyMe) {
                 args['@onlyMe'] = true;
             }
-
+            
+            if(this.entity.opportunity.avaliableEvaluationFields?.['agentsSummary']) {
+                args['registration:@select']+= ',agentsData';
+            }
+            
             api = new API('opportunity');
             let url = api.createApiUrl('findEvaluations', args);
 
             await api.GET(url).then(response => response.json().then(objs => {
                 this.evaluations = objs.map(function(item){
                     return {
+                        agentsData: item.registration?.agentsData || [],
                         evaluationId: item.evaluation?.id,
                         registrationNumber: item.registration.number,
                         registrationId: item.registration.id,
@@ -170,6 +179,25 @@ app.component('opportunity-evaluations-list', {
             const dateObj = new Date(value._date);
             return dateObj.toLocaleDateString("pt-BR");
         },
+
+        handleEvaluationResponse(event) {
+            const { response, type } = event.detail;
+
+            if (type === 'saveEvaluation' || type === 'sendEvaluation') {
+                const index = this.evaluations.findIndex(evaluation => evaluation.evaluationId === response.id);
+
+                if (index !== -1) {
+                    this.evaluations[index] = {
+                        ...this.evaluations[index],
+                        resultString: response.resultString || this.evaluations[index].resultString,
+                        status: response.status !== undefined ? response.status : this.evaluations[index].status
+                    };
+
+                    this.evaluations = [...this.evaluations];
+                }
+            }
+        },
+
         emitToggle() {
             this.$emit('toggle');
         },

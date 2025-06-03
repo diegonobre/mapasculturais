@@ -17,7 +17,7 @@ $this->breadcrumb = [
     ['label'=> i::__('Oportunidades'), 'url' => $app->createUrl('opportunities')],
 ];
 ?>
-<search page-title="<?php i::esc_attr_e('Oportunidades') ?>" entity-type="opportunity" :initial-pseudo-query="{type:[],'term:area':[]}"> 
+<search page-title="<?= htmlspecialchars($this->text('title', i::__('Oportunidades'))) ?>" entity-type="opportunity" :initial-pseudo-query="{type:[],'term:area':[]}"> 
     <template v-if="global.auth.isLoggedIn" #create-button>
         <create-opportunity #default="{modal}">
             <button @click="modal.open()" class="button button--primary button--icon">
@@ -37,7 +37,7 @@ $this->breadcrumb = [
             <mc-tab icon="list" label="<?php i::esc_attr_e('Lista') ?>" slug="list">
                 <div class="tabs-component__panels">
                     <div class="search__tabs--list">
-                        <search-list :pseudo-query="pseudoQuery" type="opportunity" select="name,type,shortDescription,files.avatar,seals,terms,registrationFrom,registrationTo">
+                        <search-list :pseudo-query="pseudoQuery" type="opportunity" select="name,type,shortDescription,files.avatar,seals,terms,registrationFrom,registrationTo,hasEndDate,isContinuousFlow">
                             <template #filter>
                                 
 

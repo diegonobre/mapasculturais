@@ -17,22 +17,28 @@ app.component('technical-evaluation-form', {
             type: Boolean,
             default: true
         },
+
+        formData: {
+            type: Object,
+            required: true
+        }
     },
 
     created() {
-        this.formData['data'] = this.evaluationData || this.skeleton();
+        this.formData.data = this.evaluationData || this.skeleton();
         this.handleCurrentEvaluationForm();
     },
 
     mounted() {
         window.addEventListener('responseEvaluation', this.processResponse);
+
+        window.addEventListener('processErrors', this.validateErrors);
     },
 
     data() {
         return {
             obs: '',
             viability: null,
-            formData: {},
             isEditable: true,
         };
     },
@@ -70,7 +76,7 @@ app.component('technical-evaluation-form', {
             for (let sectionKey in this.sections) {
                 const section = this.sections[sectionKey];
                 if (section.criteria && Array.isArray(section.criteria)) {
-                    total += section.criteria.reduce((acc, criterion) => acc + (criterion.max || 0), 0);
+                    total += section.criteria.reduce((acc, criterion) => parseFloat(acc) + parseFloat((criterion.max || 0)), 0);
                 }
             }
             return total;
@@ -110,12 +116,14 @@ app.component('technical-evaluation-form', {
 
         validateErrors() {
             let isValid = false;
+            const global = useGlobalState();
 
             for (let sectionIndex in this.sections) {
                 for (let crit of this.sections[sectionIndex].criteria) {
                     let sectionName = this.sections[sectionIndex].name;
                     let value = this.formData.data[crit.id];
-                    if (!value || value < 0) {
+                    
+                    if (!value && value !== 0) {
                         this.messages.error(`${this.text('on_section')} ${sectionName}, ${this.text('the_field')} ${crit.title} ${this.text('is_required')}`);
                         isValid = true;
                     }
@@ -131,6 +139,8 @@ app.component('technical-evaluation-form', {
                 this.messages.error(this.text('technical-checkViability'));
                 isValid = true;
             }
+
+            global.validateEvaluationErrors = isValid;
             
             return isValid;
         },

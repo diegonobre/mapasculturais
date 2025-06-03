@@ -32,6 +32,8 @@ services:
       - ./docker-data/public-files:/var/www/html/files
       - ./docker-data/private-files:/var/www/private-files
       
+      - ../docker/development/router.php:/var/www/dev/router.php
+
 
     links:
       - db

@@ -2,10 +2,12 @@
 namespace EvaluationMethodTechnical;
 
 use Doctrine\ORM\Exception\NotSupported;
+use MapasCulturais\API;
 use MapasCulturais\App;
 use MapasCulturais\Entities\EvaluationMethodConfiguration;
 use MapasCulturais\Entities\Opportunity;
 use MapasCulturais\Entities\RegistrationEvaluation;
+use MapasCulturais\i;
 use MapasCulturais\Traits;
 use Symfony\Component\Cache\Exception\InvalidArgumentException;
 
@@ -38,7 +40,6 @@ use Symfony\Component\Cache\Exception\InvalidArgumentException;
  * @property EvaluationMethodConfiguration $evaluationConfig
  * @property array $tiebreakerConfig
  * @property int $vacancies
- * @property array $selectedGlobal = []
  * @property int $quotaVacancies
  * @property array $quotaRules = []
  * @property array $quotaConfig = []
@@ -46,14 +47,10 @@ use Symfony\Component\Cache\Exception\InvalidArgumentException;
  * @property array $selectedByQuotas = []
  * @property array $rangesConfig = []
  * @property array $rangeNames = []
- * @property array $selectedByRanges = []
  * @property string $geoDivision
  * @property object $geoDivisionFields
  * @property array $geoQuotaConfig = []
  * @property array $geoLocations = []
- * @property array $selectedByGeo = []
- * @property array $registrationsByGroup = []
- * @property array $registrationsByQuotaGroup = []
  * @property bool $considerQuotasInGeneralList = false
  * @property array $registrationFields = []
  * 
@@ -67,10 +64,14 @@ class Quotas {
     protected Opportunity $phase;
     protected EvaluationMethodConfiguration $evaluationConfig;
 
+    protected bool $isQuotaActive = false;
+    protected bool $isGeoQuotaActive = false;
+    protected bool $isRangeActive = false;
+
     protected array $tiebreakerConfig;
 
     protected int $vacancies;
-    protected array $selectedGlobal = [];
+    protected float $cutoffScore;
     
     protected int $quotaVacancies;
     protected array $quotaRules = [];
@@ -80,20 +81,11 @@ class Quotas {
 
     protected array $rangesConfig = [];
     protected array $rangeNames = [];
-    protected array $selectedByRanges = [];
-    
 
     protected string $geoDivision;
     protected object $geoDivisionFields;
     protected array $geoQuotaConfig = [];
     protected array $geoLocations = [];
-    protected array $selectedByGeo = [];
-
-    // o grupo é a concatenação da regra da região com faixa
-    protected array $registrationsByGroup = [];
-
-    // o grupo é a concatenação da regra da região com faixa e tipo de cota
-    protected array $registrationsByQuotaGroup = [];
 
     protected bool $considerQuotasInGeneralList = false;
 
@@ -103,6 +95,8 @@ class Quotas {
      * @var array
      */
     protected array $registrationFields = [];
+
+    protected static array $instances = [];
         
     function __construct(int $phase_id) {
         $app = App::i();
@@ -111,15 +105,17 @@ class Quotas {
         $this->firstPhase = $this->phase->firstPhase;
         $this->evaluationConfig = $this->phase->evaluationMethodConfiguration;
 
-        $this->vacancies = $this->firstPhase->vacancies;
+        $this->vacancies = $this->firstPhase->vacancies ?: 0;
+        $this->cutoffScore = $this->evaluationConfig->cutoffScore ?: 0;
 
         $this->considerQuotasInGeneralList = $this->firstPhase->considerQuotasInGeneralList;
 
         // proecessa a configuração de cotas
-        $this->quotaRules = $this->evaluationConfig->quotaConfiguration->rules ?: [];
+        $this->quotaRules = $this->evaluationConfig->quotaConfiguration ? ($this->evaluationConfig->quotaConfiguration->rules ?: []) : [];
         $this->tiebreakerConfig = array_values((array) $this->evaluationConfig->tiebreakerCriteriaConfiguration ?: []);
         
         $this->quotaVacancies = 0;
+        $this->isQuotaActive = (bool) $this->quotaRules;
         foreach($this->quotaRules as $rule) {
             $quota_type_slug = $this->getQuotaTypeSlugByRule($rule);
             $this->quotaTypes[] = $quota_type_slug;
@@ -128,23 +124,23 @@ class Quotas {
 
             $this->quotaConfig[$quota_type_slug] = (object) [
                 'vacancies' => $rule->vacancies,
-                'percent' => $rule->vacancies / $this->vacancies,
+                'percent' => $this->vacancies ? (int) $rule->vacancies / $this->vacancies : 0,
             ];
         }
 
         // proecessa a configuração de faixas
         $registration_ranges = $this->firstPhase->registrationRanges ?: [];
+        $this->isRangeActive = (bool) $registration_ranges;
         foreach($registration_ranges as $range) {
             $range_name = $range['label'];
             $range_vacancies = $range['limit'];
 
             $this->rangesConfig[$range_name] = (object) [
                 'vacancies' => $range_vacancies, 
-                'percent' => $range_vacancies / $this->vacancies
+                'percent' => $this->vacancies ? (int) $range_vacancies / $this->vacancies : 0
             ];
 
             $this->rangeNames[] = $range_name;
-            $this->selectedByRanges[$range_name] = [];
         }
 
         // processa a configuração de distribuição geográfica
@@ -152,55 +148,57 @@ class Quotas {
             $geo_config = (object) $geo_config;
             $distribution = (object) $geo_config->distribution;
             
-            $this->geoDivision = $geo_config->geoDivision;
-            $this->geoDivisionFields = (object) $geo_config->fields;
+            $this->geoDivision = $geo_config->geoDivision ?? '';
+            $this->geoDivisionFields = (object) ($geo_config->fields ?? []);
+            $this->isGeoQuotaActive = (bool) $this->geoDivision;
 
+            $total_geo_vacancies = 0;
             foreach($distribution as $region => $num) {
-                $this->geoQuotaConfig[$region] = (object) [
-                    'vacancies' => $num,
-                    'percent' => $num / $this->vacancies
-                ];
-                $this->geoLocations[] = $region;
-                $this->selectedByGeo[$region] = [];
+                if($num) {
+                    $this->geoQuotaConfig[$region] = (object) [
+                        'vacancies' => $num,
+                        'percent' => $this->vacancies ? $num / $this->vacancies : 0
+                    ];
+                    $this->geoLocations[] = $region;
+                    $total_geo_vacancies += $num;
+                }
+            }
+            $this->geoLocations[] = 'OTHERS';
+            $this->geoQuotaConfig['OTHERS'] = (object) [
+                'vacancies' => $this->vacancies - $total_geo_vacancies,
+                'percent' => $this->vacancies ? ($this->vacancies - $total_geo_vacancies) / $this->vacancies : 0
+            ];
+        }
+    }
+
+
+    /** 
+     * Retorna a instância da classe
+     * 
+     * @param int $phase_id 
+     * @return Quotas 
+     */
+    public static function instance(int $phase_id): Quotas {
+        if(!isset(self::$instances[$phase_id])) {
+            self::$instances[$phase_id] = new Quotas($phase_id);
+        }
+
+        return self::$instances[$phase_id];
+    }
+
+    /**
+     * Retorna a lista de campos necessários para a distribuição geográfica
+     * @return array 
+     */
+    protected function getGeoQuotaFields(): array {
+        $fields = [];
+        foreach($this->geoDivisionFields as $field) {
+            if($field != 'geo') {
+                $fields[] = $field;
             }
         }
 
-        // criando grupos
-        // 1. distribuição geográfica e faixas ativas
-        if($this->geoQuotaConfig && $this->rangesConfig) {
-            foreach($this->geoLocations as $region) {
-                foreach($this->rangeNames as $range) {
-                    $group = "{$region}:{$range}:";
-                    $this->registrationsByGroup[$group] = [];
-                    foreach($this->quotaTypes as $quota) {
-                        $quota_group = "{$region}:{$range}:{$quota}";
-                        $this->registrationsByQuotaGroup[$quota_group] = [];
-                    }
-                }
-            }
-        }
-        // 2. distribuição geográfica ativas
-        else if($this->geoQuotaConfig) {
-            foreach($this->geoLocations as $region) {
-                $group = "{$region}::";
-                $this->registrationsByGroup[$group] = [];
-                foreach($this->quotaTypes as $quota) {
-                    $quota_group = "{$region}::{$quota}";
-                    $this->registrationsByQuotaGroup[$quota_group] = [];
-                }
-            }
-        }
-        // 3. faixas ativas
-        else if($this->rangesConfig) {
-            foreach($this->rangeNames as $range) {
-                $group = ":{$range}:";
-                $this->registrationsByGroup[$group] = [];
-                foreach($this->quotaTypes as $quota) {
-                    $quota_group = ":{$range}:{$quota}";
-                    $this->registrationsByQuotaGroup[$quota_group] = [];
-                }
-            }
-        }
+        return $fields;
     }
 
     /**
@@ -213,7 +211,9 @@ class Quotas {
 
         foreach($this->quotaRules as $rule) {
             foreach($rule->fields as $field) {
-                $fields[] = $field->fieldName;
+                if($field && $field->fieldName) {
+                    $fields[] = $field->fieldName;
+                }
             }
         }
 
@@ -246,7 +246,7 @@ class Quotas {
      * @return array 
      */
     protected function getFields(): array {
-        $fields = array_unique([...$this->quotaFields, ...$this->tiebreakerFields]);
+        $fields = array_unique([...$this->quotaFields, ...$this->tiebreakerFields, ...$this->geoQuotaFields]);
 
         return $fields;
     }
@@ -259,22 +259,10 @@ class Quotas {
      * @return array 
      * @throws InvalidArgumentException 
      */
-    function getRegistrationsForQuotaSorting(array $params = null): array {
+    function getRegistrationsForQuotaSorting(): array {
         $app = App::i();
                 
         $use_cache = $app->config['app.useQuotasCache'];
-        
-        if($params) {
-            unset(
-                $params['@select'], 
-                $params['@order'], 
-                $params['@limit'], 
-                $params['@page'],
-                $params['opportunity'],
-            );
-        } else {
-            $params = [];
-        }
         
         $cache_key = false;//"{$this->phase}:quota-registrations:" . md5(serialize($params));
         
@@ -283,10 +271,9 @@ class Quotas {
         }
 
         $result = $app->controller('opportunity')->apiFindRegistrations($this->phase, [
-            '@select' => implode(',', ['number,range,proponentType,agentsData,consolidatedResult,eligible,score', ...$this->fields]),
-            '@order' => 'score DESC',
-            '@quotaQuery' => true,
-            ...$params
+            '@select' => implode(',', ['number,range,proponentType,agentsData,consolidatedResult,eligible,score,sentTimestamp', ...$this->fields]),
+            '@order' => 'score DESC, id DESC',
+            'status' => API::GTE(0)
         ]);
 
         $registrations = array_map(function ($reg) {
@@ -295,6 +282,11 @@ class Quotas {
 
         if($use_cache){
             $app->cache->save($cache_key, $registrations, $app->config['app.quotasCache.lifetime']);
+        }
+
+        foreach($registrations as $registration) {
+            $this->getRegistrationQuotas($registration);
+            $this->getRegistrationRegion($registration);
         }
 
         return $registrations;
@@ -310,28 +302,39 @@ class Quotas {
     function getRegistrationRegion($registration): string {
         $app = App::i();
 
-        $opportunity_proponent_types = $this->firstPhase->registrationProponentTypes;
-        $proponent_types2agents_map = $app->config['registration.proponentTypesToAgentsMap'];
-        
-        $proponent_type = $registration->proponentType;
+        $registration_proponent_type = $registration->proponentType ?: 'default';
 
-        if(!$opportunity_proponent_types) {
-            $agent_data = $registration->agentsData['owner'];
-        } else {
-            $agent_key = $proponent_types2agents_map[$proponent_type] ?? null;
-            $agent_data = $registration->agentsData[$agent_key] ?? null;
+        $field = isset($this->geoDivisionFields->$registration_proponent_type) ? $this->geoDivisionFields->$registration_proponent_type : null;
+
+        $region = "";
+        if($field) {
+            if($field == 'geo') {
+                $opportunity_proponent_types = $this->firstPhase->registrationProponentTypes;
+                $proponent_types2agents_map = $app->config['registration.proponentTypesToAgentsMap'];
+                
+                $proponent_type = $registration->proponentType;
+    
+                if(!$opportunity_proponent_types) {
+                    $agent_data = $registration->agentsData['owner'];
+                } else {
+                    $agent_key = $proponent_types2agents_map[$proponent_type] ?? null;
+                    $agent_data = $registration->agentsData[$agent_key] ?? null;
+                }
+    
+                // ISSO NÃO DEVERIA SER POSSÍVEL
+                if(!$agent_data) {
+                    $agent_data = $registration->agentsData['owner'];
+                }
+    
+                $meta = $this->geoDivision;
+                $region =  $agent_data[$meta] ?? '';
+            } else {
+                $region = $registration->$field;
+            }
+    
+            $this->registrationFields[$registration->id] = $this->registrationFields[$registration->id] ?? [];
+            $this->registrationFields[$registration->id]['region'] = $region;
         }
-
-        // ISSO NÃO DEVERIA SER POSSÍVEL
-        if(!$agent_data) {
-            $agent_data = $registration->agentsData['owner'];
-        }
-
-        $meta = $this->geoDivision;
-        $region =  $agent_data[$meta] ?? '';
-
-        $this->registrationFields[$registration->id] = $this->registrationFields[$registration->id] ?? [];
-        $this->registrationFields[$registration->id]['region'] = $region;
 
         if(in_array($region, $this->geoLocations)) {
             return $region;
@@ -340,177 +343,250 @@ class Quotas {
         }
     }
 
-    /**
-     * Retorna o número de vagas disponíveis para um grupo
-     * 
-     * @param string $group 
-     * @param int $group_vacancies 
-     * @return int 
-     */
-    function getNumeberOfAvaliableQuotaVacancies(string $group, string $quota_type, int $group_vacancies, int $quota_vacancies, int $group_quota_vacancies): int {
-        
-        if($this->considerQuotasInGeneralList) {
-            $registrations = array_slice($this->registrationsByGroup[$group], 0, $group_vacancies);
+    public function getRegistrationsOrderByScoreConsideringQuotas(): array {
+        $app = App::i();
+
+        // obtendo as inscrições ordenadas pela pontuação considerando critérios de desempate
+        $registrations = $this->getRegistrationsForQuotaSorting();
+        $registrations = $this->tiebreaker($registrations);
+
+
+        $range_registrations = [];
+        $range_result = [];
+        $range_max_registrations = [];
+
+        if($this->isRangeActive) {
+            foreach($this->rangeNames as $range) {
+                $range_registrations[$range] = [];
+                $range_result[$range] = [];
+                $range_max_registrations[$range] = $this->rangesConfig[$range]->vacancies;
+            }
         } else {
-            $position = $group_vacancies - $group_quota_vacancies;
-            $registrations = array_slice($this->registrationsByGroup[$group], $position, $group_quota_vacancies);
+            $range_registrations['default'] = [];
+            $range_result['default'] = [];
+            $range_max_registrations['default'] = $this->vacancies;
         }
 
+        // agrupa as inscrições por faixa
         foreach($registrations as $registration) {
-            $quota_types = $this->getRegistrationQuotas($registration);
-            if(in_array($quota_type, $quota_types)) {
-                $quota_vacancies--;
+            if($registration->score < $this->cutoffScore) {
+                continue;
+            }
+            
+            $range = $registration->range ?: 'default';
+            $range_registrations[$range][] = $registration;
+            if(count($range_result[$range]) < $range_max_registrations[$range]) {
+                $range_result[$range][] = $registration;
             }
         }
 
-        return max(0,$quota_vacancies);
-    }
+        // tenta garantir as vagas das regiões dentro das faixas
+        if($this->isGeoQuotaActive) {
+            foreach($range_result as $range => $regs) {
+                $geo_count_results = [];
+                $geo_vacancies = [];
+                foreach($regs as $registration) {
+                    $region = $this->getRegistrationRegion($registration);
+                    $geo_count_results[$region] = $geo_count_results[$region] ?? 0;
+                    $geo_count_results[$region]++;
+                }
+                $range_vacancies = $range_max_registrations[$range];
+                foreach($this->geoLocations as $region) {
+                    $geo_vacancies[$region] = ceil($range_vacancies * $this->geoQuotaConfig[$region]->percent);
+                }
 
-    /**
-     * Gera o resultado das cotas para um grupo
-     * 
-     * @param string $group 
-     * @param int $group_vacancies 
-     * @return array 
-     */
-    function generateGroupQuotaResults(string $group, int $group_vacancies): array {
-        $group_quota_vacancies = ceil($group_vacancies * $this->quotaVacancies / $this->vacancies);
+                foreach($this->geoLocations as $region) {
+                    foreach($range_registrations[$range] as $registration){
+                        $registration_region = $this->getRegistrationRegion($registration);
 
-        $result = array_slice($this->registrationsByGroup[$group], 0, $group_vacancies);
+                        $_count_result = $geo_count_results[$region] ?? 0;
+                        $_vacancies = $geo_vacancies[$region] ?? 0;
 
-        // gera o número de vagar que devem ser preenchidas para cada tipo de cota
-        foreach($this->quotaTypes as $quota) {
-            $quota_group = "{$group}{$quota}";
-            $quota_vacancies = ceil($group_vacancies * $this->quotaConfig[$quota]->percent);
-            $avaliable_quota_vacancies = $this->getNumeberOfAvaliableQuotaVacancies($group, $quota, $group_vacancies, $quota_vacancies, $group_quota_vacancies);
+                        /*
+                         O número de inscrições da região é maior do que o número de vagas da região, então 
+                         precisa substituir uma inscrição da região ($region) por uma inscrição de outra região com vagas sobrando
+                         */
+                        if($_count_result > $_vacancies) {
 
-            if($avaliable_quota_vacancies > 0) {
-                $avaliable_quota_registrations = array_udiff($this->registrationsByQuotaGroup[$quota_group], $result, fn($reg1, $reg2) => $reg1->id <=> $reg2->id);
+                            // obtém a região que ainda tem vagas
+                            $regions_with_vacancies = [];
+                            foreach($this->geoLocations as $_region) {
+                                if($_region != $region && ($geo_count_results[$_region] ?? 0) < ($geo_vacancies[$_region] ?? 0)) {
+                                    $regions_with_vacancies[] = $_region;
+                                }
+                            }
 
-                // ordena as inscrições disponíveis para cota por score. as notas mais altas ficam no final do array
-                usort($avaliable_quota_registrations, fn($reg1, $reg2) => $reg1->score <=> $reg2->score);
-                
-                $result = array_reverse($result);
-                
-                for($i = 0; $i < $avaliable_quota_vacancies; $i++) {
-                    // pega a última posição do array para ser a primeira a ser retirada
-                    $registration = array_pop($avaliable_quota_registrations);
-                    
-                    // procura o não cotista com a menor nota e substitui pelo cotista
-                    foreach($result as $j => $reg) {
-                        
-                        if($reg && !$this->getRegistrationQuotas($reg)) {
-                            $result[$j] = $registration;
-                            break;
+                            // obtém a posição da última inscrição da região atual ($region)
+                            $key_of_registration_to_exclude = null;
+                            foreach($range_result[$range] as $key => $_registration) {
+                                $_registration_region = $this->getRegistrationRegion($_registration);
+                                if($_registration_region == $region) {
+                                    $key_of_registration_to_exclude = $key;
+                                }
+                            }
+
+
+                            if(!$this->isRegistrationInArray($registration, $range_result[$range]) && in_array($registration_region, $regions_with_vacancies)) {
+                                $geo_count_results[$registration_region]++;
+                                $geo_count_results[$region]--;
+                                $range_result[$range][$key_of_registration_to_exclude] = $registration;
+                            }
                         }
                     }
                 }
-
-                $result = array_reverse($result);
             }
         }
 
+        // aplica as cotas nas faixas
+        if($this->isQuotaActive) {
+            foreach($range_result as $range => $regs) {
+                $_result = &$range_result[$range];
+                $_registrations = $range_registrations[$range];
+                /*
+                    Se o número de inscrições "selecionadas" na faixa não for menor que o 
+                    número de inscrições totais na faixa, não há quem colocar como cotista,
+                    então pula para a próxima faixa
+                */
+                if(!(count($_result) < count($_registrations))) {
+                    continue;
+                }
+
+                $range_vacancies = isset($this->rangesConfig[$range]) && isset($this->rangesConfig[$range]->vacancies) ? (int) $this->rangesConfig[$range]->vacancies : 0;
+                $range_quota_vacancies = [];
+                $range_total_quota_vacancies = 0;
+                foreach($this->quotaConfig as $quota_slug => $quota_config) {
+                    $quota_percent = $quota_config->percent;
+                    $quota_vacancies = ceil($range_vacancies * $quota_percent);
+
+                    /* 
+                        O número de vagas de cotas dentro das faixas será arredondado para cima,
+                        então se houver, por exemplo, 5% de vagas numa faixa com 25 vagas, 
+                        o sistema considerará 2 vagas para cotistas 
+                    */
+                    $range_quota_vacancies[$quota_slug] = $quota_vacancies;
+                    $range_total_quota_vacancies += $quota_vacancies;
+                }
+
+                /*
+                    Caso a oportunidade esteja configurada para considerar os cotistas dentro da 
+                    ampla concorrência, começa a contar do início da lista, caso contrário começa a 
+                    contar a partir da posição das vagas exclusivas para cotistas
+                    por exemplo: se há 10 vagas e 2 vagas para cotistas, verifica se os 2 últimos 
+                    posicionados são cotistas e contabiliza esses como cotistas.
+                */
+                
+                foreach($this->quotaConfig as $quota_slug => $quota_config) {
+                    $first_quota_index = $this->considerQuotasInGeneralList ? 
+                        0 : count($_result) - $range_total_quota_vacancies;
+    
+                    $avaliable_quota_vacancies = $range_quota_vacancies[$quota_slug];
+
+                    // calcula o número de vagas ainda disponíveis para o tipo de cota
+                    for($i = count($_result) -1; $i >= $first_quota_index; $i--) {
+                        // se não tem mais vagas para este tipo de cota
+                        if($avaliable_quota_vacancies <= 0) {
+                            break;
+                        }
+                        $registration = $_result[$i];
+                        
+                        if($this->isRegistrationEligibleForQuota($registration, $quota_slug)) {
+                            $avaliable_quota_vacancies--;
+                            $this->setRegistrationAsQuota($registration, $quota_slug);
+
+                        }
+                    }
+                    /*
+                        Preenche as vagas para o tipo de cota, procurando na lista total de inscrições da faixa
+                        por inscrições que não estejam na lista de classificados da faixa e que se enquadrem como cotista;
+                        e substituindo a inscrição com menor valor que não se enquadre em nenhum tipo de cota.
+                        Caso a oportunidade use divisão geográfica, tenta substituir a inscrição da mesma região geográfica
+                    */
+                    foreach($_registrations as $registration) {
+                        // se não tem mais vagas para este tipo de cota
+                        if($avaliable_quota_vacancies <= 0) {
+                            break;
+                        } 
+
+                        // encontra o primeiro cotista
+                        if(!$this->isRegistrationInArray($registration, $_result) && $this->isRegistrationEligibleForQuota($registration, $quota_slug)) {
+                            // substitui o não cotista com nota mais baixa pelo cotista encontrado
+                            $region = $this->getRegistrationRegion($registration);
+                            $replaced = false;
+
+                            // primeiro tenta substituir dentro da mesma região
+                            for($i = count($_result) - 1; $i >= 0; $i--) {
+                                if(!$this->getRegistrationQuotas($_result[$i])) {
+                                    $_region = $this->getRegistrationRegion($_result[$i]);
+                                    if($_region == $region) {
+                                        $this->setRegistrationAsQuota($registration, $quota_slug, $_result[$i]);
+                                        $_result[$i] = $registration;
+                                        $replaced = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // se não conseguiu substituir dentro da mesma região, desconsidera a região.
+                            if(!$replaced) {
+                                for($i = count($_result) -1; $i >= 0; $i--) {
+                                    if(!$this->getRegistrationQuotas($_result[$i])) {
+                                        $this->setRegistrationAsQuota($registration, $quota_slug, $_result[$i]);
+                                        $_result[$i] = $registration;
+                                        $replaced = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if($replaced) {
+                                $avaliable_quota_vacancies--;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        $result = [];
+        foreach($range_result as $regs) {
+            foreach($regs as $reg) {
+                $result[] = $reg;
+            }
+        }
+        
+        $result = $this->tiebreaker($result);
+
+        foreach($registrations as $registration) {            
+            if(!$this->isRegistrationInArray($registration, $result)) {
+                $result[] = $registration;
+            }
+        }
+        
         return $result;
     }
 
-    /**
-     * Retorna lista de inscrições ordenadas pela classificação final considerando as cotas
-     * 
-     * @param mixed $params 
-     * @return mixed 
-     * @throws NotSupported 
-     * @throws InvalidArgumentException 
-     */
-    public function getRegistrationsOrderByScoreConsideringQuotas($params = null): array {
-        $app = App::i();
-
-        // HÁ 3 SITUAÇÕES PARA A DISTRIBUIÇÃO DE VAGAS
-        // 1. distribuição geográfica e faixas ativas
-        // 2. somente distribuição geográfica ativa
-        // 3. somente faixas ativas
-
-        // obtendo as inscrições ordenadas pela pontuação considerando critérios de desempate
-        $registrations = $this->getRegistrationsForQuotaSorting($params);
-        $registrations = $this->tiebreaker($registrations);
-
-        // AGRUPANDO AS INSCRIÇÕES
-        foreach($registrations as $registration) {
-            $region = $this->getRegistrationRegion($registration);
-            $range = $registration->range;
-
-            $group = "{$region}:{$range}:";
-            $this->registrationsByGroup[$group][] = $registration;
-
-            if($registration_quotas = $this->getRegistrationQuotas($registration)) {
-                foreach($registration_quotas as $registration_quota) {
-                    $quota_group = "{$region}:{$range}:{$registration_quota}";
-                    $this->registrationsByQuotaGroup[$quota_group][] = $registration;
-                }
-            }
-        }
-        
-        // DISTRIBUINDO AS VAGAS
-        $result = [];
-        // 1. distribuição geográfica e faixas ativas
-        if($this->geoQuotaConfig && $this->rangesConfig) {
-            foreach($this->geoLocations as $region) {
-                foreach($this->rangeNames as $range) {
-                    $group = "{$region}:{$range}:";
-                    $group_vacancies = $this->rangesConfig[$range]->vacancies * $this->geoQuotaConfig[$region]->percent;
-
-                    $result[$group] = $this->generateGroupQuotaResults($group, $group_vacancies);
-                }
-            }
-        } 
-        
-        // 2. somente distribuição geográfica ativa
-        else if($this->geoQuotaConfig) {
-            foreach($this->geoLocations as $region) {
-                $group = "{$region}::";
-                $group_vacancies = $this->geoQuotaConfig[$region]->vacancies;
-
-                $result[$group] = $this->generateGroupQuotaResults($group, $group_vacancies);
-            }
-        }
-         
-        // 3. somente faixas ativas
-        else if($this->rangesConfig) {
-            foreach($this->rangeNames as $range) {
-                $group = ":{$range}:";
-                $group_vacancies = $this->rangesConfig[$range]->vacancies;
-
-                $result[$group] = $this->generateGroupQuotaResults($group, $group_vacancies);
+    public function isRegistrationInArray($registration, array $list_of_registrations): bool {
+        foreach($list_of_registrations as $reg) {
+            if($reg->number == $registration->number) {
+                return true;
             }
         }
 
-        // gera uma lista única com as inscrições selecionadas
-        $selected_registrations = [];
-        foreach($result as $regs) {
-            $selected_registrations = array_merge($selected_registrations, $regs);
+        return false;
+    }
+
+    public function setRegistrationAsQuota(object $registration, string $quota_slug, object $replaced_registration = null) {
+        $registration->usingQuota = true;
+        if ($replaced_registration) {
+            $this->registrationFields[$registration->id]['usingQuota'] = $quota_slug . "\n" . sprintf(i::__("(substituindo %s)"), $replaced_registration->number);
+        } else {
+            $this->registrationFields[$registration->id]['usingQuota'] = $quota_slug;
         }
+    }
 
-        // filtra somente resultados válidos
-        $selected_registrations = array_filter($selected_registrations);
-
-        // completa a lista de inscrições selecionadas
-        $other_registrations = array_udiff($registrations, $selected_registrations, fn($reg1, $reg2) => $reg1->id <=> $reg2->id);
-        if(count($selected_registrations) < $this->vacancies) {
-            $_registrations = array_slice($other_registrations, 0, $this->vacancies - count($selected_registrations));
-            $selected_registrations = array_merge($selected_registrations, $_registrations);
-        }
-
-        // ordena pela nota final
-        $selected_registrations = $this->tiebreaker($selected_registrations);
-
-        // adiciona os demais resultados à lista
-        foreach(array_values($other_registrations) as &$reg) {
-            if(!in_array($reg, $selected_registrations)){
-                $selected_registrations[] = &$reg;
-            }
-        }
-
-        return $selected_registrations;
-
+    public function isRegistrationEligibleForQuota(object $registration, string $quota_slug): bool {
+        $registration_quotas = $this->getRegistrationQuotas($registration);
+        return in_array($quota_slug, $registration_quotas);
     }
 
     /** 
@@ -537,8 +613,8 @@ class Quotas {
             $proponent_type = $registration->proponentType ?? 'default';
 
             foreach($this->quotaRules as $rule) {
-                $field_name = $rule->fields->$proponent_type->fieldName;
-                if(in_array($registration->$field_name, $rule->fields->$proponent_type->eligibleValues)) {
+                $field_name = $rule->fields->$proponent_type->fieldName ??  null;
+                if($field_name && in_array($registration->$field_name, $rule->fields->$proponent_type->eligibleValues)) {
                     $result[] = $this->getQuotaTypeSlugByRule($rule);
                     $quotas[] = $rule->title;
                 }
@@ -547,7 +623,7 @@ class Quotas {
         
         $this->registrationFields[$registration->id] = $this->registrationFields[$registration->id] ?? [];
         $this->registrationFields[$registration->id]['quotas'] = $quotas;
-
+        $this->registrationFields[$registration->id]['appliedForQuota'] = $registration->appliedForQuota;
         return $result;
     }
 
@@ -579,11 +655,15 @@ class Quotas {
     private function saveRegistrationTiebreaker($registration, $tiebreaker, $value = null) {
         $this->registrationFields[$registration->id] = $this->registrationFields[$registration->id] ?? [];
         $this->registrationFields[$registration->id]['tiebreaker'] = $this->registrationFields[$registration->id]['tiebreaker'] ?? [];
-    
+        
         if ($tiebreaker->criterionType == 'criterion') {
             $key = $this->getCriterionName($tiebreaker->preferences);
         } else if ($tiebreaker->criterionType == 'sectionCriteria') {
             $key = $this->getSectionCriterionName($tiebreaker->preferences);
+    
+        } else if ($tiebreaker->criterionType == 'submissionDate') {
+            $key = $tiebreaker->criterionType;
+            $value = $registration->sentTimestamp;
     
         } else {
             $key = $tiebreaker->selected->title;
@@ -618,8 +698,14 @@ class Quotas {
                 $must_fetch_evaluation_data = true;
                 break;
             }
+            
+            if($tiebreaker->criterionType == 'submissionDate') {
+                $must_fetch_evaluation_data = true;
+                break;
+            }
         }
-
+        
+        $evaluation_data = [];
         if($must_fetch_evaluation_data) {
             $evaluation_data = $this->fetchEvaluationData($registrations);
         }
@@ -631,6 +717,29 @@ class Quotas {
             }
 
             foreach($tiebreaker_configuration as $tiebreaker) {
+                if(isset($tiebreaker->criterionType) && $tiebreaker->criterionType == 'submissionDate') {
+                    $registration1Has = property_exists($registration1, 'sentTimestamp') ? $registration1->sentTimestamp : null;
+                    $registration2Has = property_exists($registration2, 'sentTimestamp') ? $registration2->sentTimestamp : null;
+                
+                    $this->saveRegistrationTiebreaker($registration1, $tiebreaker);
+                    $this->saveRegistrationTiebreaker($registration2, $tiebreaker);
+                
+                    if ($registration1Has !== null && $registration2Has !== null) {
+                        $result = $registration1Has <=> $registration2Has;
+                        if ($tiebreaker->preferences == 'smallest') {
+                            if ($result !== 0) {
+                                return $result;
+                            }
+                        }
+                
+                        if ($tiebreaker->preferences == 'largest') {
+                            if ($result !== 0) {
+                                return -$result;
+                            }
+                        }
+                    }
+                }
+                
                 if(isset($tiebreaker->criterionType) && $tiebreaker->criterionType == 'criterion') {
                     $registration1Has = $this->tiebreakerCriterion($tiebreaker->preferences, $registration1->id, $evaluation_data);
                     $registration2Has = $this->tiebreakerCriterion($tiebreaker->preferences, $registration2->id, $evaluation_data);

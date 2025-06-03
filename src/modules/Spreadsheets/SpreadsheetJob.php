@@ -2,11 +2,20 @@
 
 namespace Spreadsheets;
 
+use DateTime;
 use MapasCulturais\App;
 use MapasCulturais\Definitions;
 use MapasCulturais\Definitions\JobType;
 use MapasCulturais\Entities\Job;
+use MapasCulturais\Entities\Agent;
+use MapasCulturais\Entities\Event;
+use MapasCulturais\Entities\Space;
+use MapasCulturais\Entities\Project;
+use MapasCulturais\Entities\Opportunity;
+use MapasCulturais\Entities\Registration;
+use MapasCulturais\Entities\RegistrationEvaluation;
 use MapasCulturais\i;
+use MapasCulturais\Types\GeoPoint;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Writer\Csv;
@@ -14,6 +23,8 @@ use PhpOffice\PhpSpreadsheet\Writer\Ods;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use Symfony\Component\VarDumper\Cloner\Data;
 
 /**
  * @property-read string $fileGroup
@@ -44,7 +55,9 @@ abstract class SpreadsheetJob extends JobType
 
     protected function _execute(Job $job)
     {
+        $app = App::i();
         
+        ini_set('memory_limit', $app->config['app.export.memoryLimit']);
         $entity_class_name = $job->entityClassName;
         $file_class = $job->owner->getFileClassName();
         
@@ -87,8 +100,8 @@ abstract class SpreadsheetJob extends JobType
                         ],
                     ]);
 
-                    $sheet->mergeCells($col);
-                    $sheet->setCellValue($col_init, $value);
+                    $data_type = is_numeric($value) ? DataType::TYPE_NUMERIC : DataType::TYPE_STRING;
+                    $sheet->setCellValueExplicit($col_init, $value, $data_type);
                     continue;
                 }
 
@@ -105,21 +118,74 @@ abstract class SpreadsheetJob extends JobType
                     ],
                 ]);
 
-                $sheet->setCellValue($col, $value);
+                $data_type = is_numeric($value) ? DataType::TYPE_NUMERIC : DataType::TYPE_STRING;
+                $sheet->setCellValueExplicit($col, $value, $data_type);
             }
         }
 
         $sheet->fromArray($sub_header, null, $has_sub_header ? "A2" : "A1");
+
+        $highestColumn = $sheet->getHighestColumn();
+        $highestColumnIndex = Coordinate::columnIndexFromString($highestColumn);
+
+        for ($col = 1; $col <= $highestColumnIndex; $col++) {
+            $columnLetter = Coordinate::stringFromColumnIndex($col);
+            $sheet->getColumnDimension($columnLetter)->setAutoSize(true);
+        }
         
         $row = $has_sub_header ? count($header)+1 : 2;
         while($batch = $this->getBatch($job)) {
             foreach ($batch as $data) {
                 $new_data = [];
+
                 foreach($sub_header as $prop => $label) {
                     if (isset($data[$prop]) && is_array($data[$prop])) {
-                        $new_data[] = implode(', ', $data[$prop]);
+                        $middle_data = [];
+
+                        foreach ($data[$prop] as $key => $value){
+                            
+                            if(is_array($value)){
+                                $middle_data[] = implode(', ', $value);
+                            }else{
+                                $middle_data[] = $value;
+                            }
+                        }
+                        
+                        $new_data[] = implode(', ', $middle_data);
                     } else {
                         $new_data[] = isset($data[$prop]) ? $data[$prop] : null; 
+                    }
+                }
+                foreach($new_data as $colIndex => &$value) {
+                    if($value instanceof DateTime) {
+                        $value = $value->format('d/m/Y H:i:s');
+                        continue;
+                    }
+
+                    if($value instanceof GeoPoint) {
+                        $value = "{$value}";
+                        continue;
+                    }
+
+                    if(is_string($value) && $value && $value[0] === '=') {
+                        $value = "'$value";
+                    }
+
+                    // Insere link quando 
+                    if (is_string($value) && preg_match('/^https?:\/\//', $value)) {
+                        $columnLetter = Coordinate::stringFromColumnIndex($colIndex + 1);
+                        $cellAddress = $columnLetter . $row;
+        
+                        $sheet->getCell($cellAddress)->setValue($value);
+                        $sheet->getCell($cellAddress)->getHyperlink()->setUrl($value);
+        
+                        $sheet->getStyle($cellAddress)->applyFromArray([
+                            'font' => [
+                                'color' => ['rgb' => '0000FF'],
+                                'underline' => true
+                            ]
+                        ]);
+                        continue;
                     }
                 }
 
@@ -174,9 +240,13 @@ abstract class SpreadsheetJob extends JobType
         $app = App::i();
         
         $template = 'export_spreadsheet';
+        $dict_entity = $this->dictEntity($entity_class);
+        $message_body = i::__("Sua planilha de {$dict_entity} foi gerada e está pronta para ser baixada. Acesse o link abaixo para obter o arquivo:");
+
         $data = [
             'userName' => $user->profile->name,
-            'pathFile' => $file->url
+            'pathFile' => $file->url,
+            'messageBody' => $message_body
         ];
 
         $message = $app->renderMailerTemplate($template, $data);
@@ -184,7 +254,7 @@ abstract class SpreadsheetJob extends JobType
         $app->createAndSendMailMessage([
             'from' => $app->config['mailer.from'],
             'to' => $user->email,
-            'subject' => sprintf(i::__($message['title'], $entity_class)),
+            'subject' => sprintf("[{$app->siteName}] " . i::__($message['title'], $entity_class)),
             'body' => $message['body'],
         ]);
     }
@@ -212,7 +282,9 @@ abstract class SpreadsheetJob extends JobType
     {
         $app = App::i();
 
-        $app->applyHookBoundTo($this, "SpreadsheetJob($this->slug).getHeader:before", [$job]);
+        $job_query = $job->query;
+        $app->applyHookBoundTo($this, "SpreadsheetJob($this->slug).getHeader:before", [$job, &$job_query]);
+        $job->query =  $job_query;
 
         $result = $this->_getHeader($job);
 
@@ -225,7 +297,9 @@ abstract class SpreadsheetJob extends JobType
     {
         $app = App::i();
 
-        $app->applyHookBoundTo($this, "SpreadsheetJob($this->slug).getBatch:before", [$job]);
+        $job_query = $job->query;
+        $app->applyHookBoundTo($this, "SpreadsheetJob($this->slug).getBatch:before", [$job, &$job_query]);
+        $job->query =  $job_query;
         
         $result = $this->_getBatch($job);
         $this->page++;
@@ -313,6 +387,28 @@ abstract class SpreadsheetJob extends JobType
         } else {
             return [];
         }
+    }
+
+    /**
+     *  Retorna o texto relacionado a entidade
+     * @param string $entity 
+     * @return string 
+     */
+    public function dictEntity(string $entity): string
+    {
+        $class = $entity;
+
+        $entities = [
+            Agent::class => i::__("Agente"),
+            Opportunity::class => i::__("Oportunidade"),
+            Project::class => i::__("Projeto"),
+            Space::class => i::__("Espaço"),
+            Event::class => i::__("Evento"),
+            Registration::class => i::__("Inscrição"),
+            RegistrationEvaluation::class => i::__("Avaliações de inscrições")
+        ];
+
+        return $entities[$class];
     }
 
     /**

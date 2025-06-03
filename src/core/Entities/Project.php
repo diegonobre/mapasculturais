@@ -32,7 +32,8 @@ class Project extends \MapasCulturais\Entity
         Traits\EntityOriginSubsite,
         Traits\EntityArchive,
         Traits\EntityLock,
-        Traits\EntityOpportunities;
+        Traits\EntityOpportunities,
+        Traits\EntityRevision;
         
     protected $__enableMagicGetterHook = true;
 
@@ -292,6 +293,15 @@ class Project extends \MapasCulturais\Entity
     function isRegistrationOpen(){
         $cdate = new \DateTime;
         return $cdate >= $this->startsOn && $cdate <= $this->endsOn;
+    }
+
+    static function getPCachePermissionsList() {
+        $permissions = parent::getPCachePermissionsList();
+
+        $permissions[] = 'createEvents';
+        $permissions[] = 'requestEventRelation';
+        
+        return $permissions;
     }
 
     protected function canUserCreateEvents($user) {

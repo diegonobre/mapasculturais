@@ -7,9 +7,25 @@
 
 use MapasCulturais\i;
 
-$this->import('evaluation-actions');
+$this->import('
+    evaluation-actions
+    evaluation-documentary-datail
+    mc-modal
+');
 ?>
+
 <div class="documentary-evaluation-form grid-12 field">
+    <h2 v-if="needsTiebreaker && isMinervaGroup && enableExternalReviews" class="needs-tiebreaker danger__background"><?= i::_e('Voto de minerva') ?></h2>
+    <mc-modal v-if="needsTiebreaker && isMinervaGroup && enableExternalReviews" :title="`${evaluationName} - ${entity.number}`" classes="registration-results__modal">
+        <template #default>
+            <evaluation-documentary-datail :registration="entity"></evaluation-documentary-datail>
+        </template>
+    
+        
+        <template #button="modal">
+            <button class="button button--primary button--sm button--large" @click="modal.open()"><?php i::_e('Ver pareceres dos demais avaliadores') ?></button>
+        </template>
+    </mc-modal>
     <label><?= i::__('Avaliador') ?>: {{userName}}</label>
 
     <div v-if="enableForm" id="evaluation-form" class="documentary-evaluation-form__content col-12">
@@ -19,15 +35,15 @@ $this->import('evaluation-actions');
         <input type="hidden" v-model="formData.data[fieldId].label" @change="setEvaluationData(fieldId)" />
         <div class="documentary-evaluation-form__fields field">
             <label>
-                <input type="radio" value="" v-model="formData.data[fieldId].evaluation" @change="setEvaluationData(fieldId)" :disabled="!isEditable"/>
+                <input type="radio" value="" v-model="formData.data[fieldId].evaluation" @change="setEvaluationData(fieldId, 'empty')" :disabled="!isEditable"/>
                 <?= i::__('Não avaliar') ?>
             </label>
             <label>
-                <input type="radio" value="valid" v-model="formData.data[fieldId].evaluation" @change="setEvaluationData(fieldId)" :disabled="!isEditable"/>
+                <input type="radio" value="valid" v-model="formData.data[fieldId].evaluation" @change="setEvaluationData(fieldId, 'valid')" :disabled="!isEditable"/>
                 <?= i::__('Válida') ?>
             </label>
             <label>
-                <input type="radio" value="invalid" v-model="formData.data[fieldId].evaluation" @change="setEvaluationData(fieldId)" :disabled="!isEditable"/>
+                <input type="radio" value="invalid" v-model="formData.data[fieldId].evaluation" @change="setEvaluationData(fieldId, 'invalid')" :disabled="!isEditable"/>
                 <?= i::__('Inválida') ?>
             </label>
         </div>
@@ -44,6 +60,4 @@ $this->import('evaluation-actions');
             </label>
         </div>
     </div>
-
-    <evaluation-actions class="col-12" :formData="formData" :entity="entity" :validateErrors='validateErrors'></evaluation-actions>
 </div>

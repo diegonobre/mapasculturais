@@ -23,6 +23,7 @@ $this->import('
     opportunity-phases-timeline
     registration-print
     v1-embed-tool
+    registration-evaluation-tab
 ');
 
 $this->breadcrumb = [
@@ -114,7 +115,7 @@ $today = new DateTime();
                 <mc-card>
                     <template #content>
 
-                        <opportunity-phases-timeline center big></opportunity-phases-timeline>
+                        <opportunity-phases-timeline :entity-status="entity.status" center big></opportunity-phases-timeline>
 
                     </template>
                 </mc-card>
@@ -123,7 +124,7 @@ $today = new DateTime();
 
         <mc-tab label="<?= i::_e('Ficha de inscrição') ?>" slug="ficha">
             <div class="registration__content">
-                <mc-card>
+                <mc-card v-if="entity.agentsData.owner">
                     <template #content>
                         <div class="registered-info">
                             <span class="info"> 
@@ -181,7 +182,6 @@ $today = new DateTime();
                             <span class="info" v-if="!entity.projectName">
                                 <?= i::__('Nome do projeto não informado') ?>
                             </div>
-                        </div>
                     </template>
                 </mc-card>
 
@@ -193,7 +193,7 @@ $today = new DateTime();
                         <div v-if="entity.agentRelations.hasOwnProperty('coletivo') && entity.agentRelations.coletivo[0]" class="space">
                             <mc-avatar :entity="entity.agentRelations.coletivo[0].agent" size="xsmall"></mc-avatar>
                             <div class="name">
-                                <a href="entity?.agentRelations.coletivo[0].agent.singleUrl" class="registration__collective-link bold" :class="[entity.agentRelations.coletivo[0]['@entityType'] + '__color']"> {{entity?.agentRelations.coletivo[0].agent.name}} </a>
+                                <a :href="entity?.agentRelations.coletivo[0].agent.singleUrl" class="registration__collective-link bold" :class="[entity.agentRelations.coletivo[0]['@entityType'] + '__color']"> {{entity?.agentRelations.coletivo[0].agent.name}} </a>
                             </div>
                         </div>
                         <div v-if="!entity.agentRelations.hasOwnProperty('coletivo')" class="space">
@@ -256,7 +256,7 @@ $today = new DateTime();
 
                 <?php $phase = $entity;
                 while($phase): $opportunity = $phase->opportunity;?>
-                    <?php if($opportunity->isDataCollection && $today >= $opportunity->registrationFrom):?>
+                    <?php if($opportunity->isDataCollection && $phase->canUser('view')):?>
                         <?php if($opportunity->isFirstPhase):?>
                             <h2><?= i::__('Inscrição') ?></h2>
                         <?php else: ?>
@@ -272,8 +272,23 @@ $today = new DateTime();
                                     <a class="button button--primary" href="<?=$app->createUrl("registration", "edit", [$phase->id])?>"><?= i::__('Preencher formulário') ?></a>
                                 </div>
                             </div>
-                        <?php else: ?>
-                            <v1-embed-tool route="registrationview" :id="<?=$phase->id?>"></v1-embed-tool>
+                            <?php else: ?>
+                                <?php if($phase->status === 0 && $today > $opportunity->registrationTo ):?>
+                                    <mc-alert type="warning">
+                                        <?= i::__("Você não enviou o formulário desta fase") ?> <br>
+                                    </mc-alert>
+                                    <div class="grid-12">
+                                        <div class="col-3 sm:col-12">
+                                            <a class="button button--primary" href="<?=$app->createUrl("registration", "edit", [$phase->id])?>"><?= i::__('Acessar formulário') ?></a>
+                                        </div>
+                                    </div>
+                                <?php else: ?>
+                                    <?php $this->applyTemplateHook("registration-form-view", 'before', [$phase]) ?>
+                                    <v1-embed-tool route="registrationview" :id="<?=$phase->id?>"></v1-embed-tool>
+                                    <?php $this->applyTemplateHook("registration-form-view", 'after', [$phase]) ?>
+                                <?php endif ?>
+                                
+                            
                         <?php endif ?>
                     <?php endif ?>
                     <?php $phase = $phase->nextPhase; ?>
@@ -284,21 +299,22 @@ $today = new DateTime();
 
         <mc-tab v-if="entity.opportunity.currentUserPermissions['@control']" label="<?= i::_e('Avaliadores') ?>" slug="valuers">
             <div class="registration__content">
+                <mc-tabs>
                 <?php $phase = $entity; 
-                    while($phase): $opportunity = $phase->opportunity;?>
-                    <mc-card>
-                        <?php if($today >= $opportunity->registrationFrom):?>
-                            <?php if($opportunity->isFirstPhase):?>
-                                <h2><?= i::__('Inscrição') ?></h2>
-                            <?php else: ?>
-                                <h2><?= $opportunity->name ?></h2>
-                            <?php endif ?>
-
-                            <v1-embed-tool route="valuers" :id="<?=$phase->id?>"></v1-embed-tool>
-                        <?php endif ?>
-                        <?php $phase = $phase->nextPhase; ?>
-                    </mc-card>
-                <?php endwhile ?>
+                    while($phase):
+                        if (!($emc = $phase->opportunity->evaluationMethodConfiguration)) {
+                            $phase = $phase->nextPhase; 
+                            continue;
+                        }
+                        ?>
+                        <mc-tab label="<?= htmlspecialchars($emc->name) ?>" slug="valuers-<?= $phase->opportunity->id ?>">
+                            <mc-card>
+                                <registration-evaluation-tab :phase-id="<?= $phase->opportunity->id ?>"></registration-evaluation-tab>
+                            </mc-card>
+                        </mc-tab>
+                    <?php $phase = $phase->nextPhase;
+                    endwhile ?>
+                </mc-tabs>
             </div>
         </mc-tab>
         

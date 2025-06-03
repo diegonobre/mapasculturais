@@ -1,5 +1,7 @@
 class Entity {
-    constructor(objectType, id, scope) {
+    static __pkCache = new Map();
+  
+    constructor(objectType, id, scope = 'default') {
         this.__objectType = objectType;
         this.id = id;
         this.__scope = (scope || 'default');
@@ -14,7 +16,13 @@ class Entity {
         this.text = Utils.getTexts('mc-entity');
     }
 
-    populate(obj, preserveValues = true) {
+    static fromJson(object, scope = 'default') {
+        const entity = new Entity(object['@entityType'], object.id, scope);
+        entity.populate(object);
+        return entity;
+    }
+
+    populate(obj, preserveValues = true, updatedData = null) {
         const __properties = this.$PROPERTIES;
         const __relations = this.$RELATIONS;
         const defaultProperties = [
@@ -54,6 +62,10 @@ class Entity {
                 } else {
                     val = new McDate(val.date);
                 }
+            }
+
+            if (definition.type === 'checklist' && !val) {
+                val = [];
             }
 
             if (prop == 'location' && val) {
@@ -99,7 +111,15 @@ class Entity {
 
         this.cleanErrors();
         
-        this.__originalValues = this.data();
+        if (updatedData) {
+            const data = this.data();
+            for (const key in updatedData) {
+                this.__originalValues[key] = data[key];
+            }
+        } else {
+            this.__originalValues = this.data();
+        }
+      
         return this;
     }
 
@@ -255,15 +275,14 @@ class Entity {
     }
 
     get $PK() {
-        const __properties = this.$PROPERTIES;
-        let pk;
-        for (let prop in __properties) {
-            if(__properties[prop].isPK) {
-                pk = prop;
-                break;
-            }
+        if (Entity.__pkCache.has(this.__objectType)) {
+            return Entity.__pkCache.get(this.__objectType);
         }
 
+        const __properties = this.$PROPERTIES;
+        const [pk] = Object.entries(__properties).find(([key, prop]) => prop.isPK) ?? [];
+
+        Entity.__pkCache.set(this.__objectType, pk);
         return pk;
     }
 
@@ -318,8 +337,7 @@ class Entity {
         return this.API.createCacheId(this.id);
     }
 
-    sendMessage(message, type) {
-        type = type || 'success';
+    sendMessage(message, type = 'success') {
         if(this.__messagesEnabled) {
             const messages = useMessages();
             messages[type](message);
@@ -362,7 +380,6 @@ class Entity {
 
         if (res.ok) { // status 20x
             data = cb(data) || data;
-            this.cleanErrors();
             result = Promise.resolve(data);
         } else {
             this.catchErrors(res, data);
@@ -374,7 +391,8 @@ class Entity {
         return result;
     }
 
-    async POST(action, {callback, data}) {        
+    async POST(action, {callback, data, processingMessage}) {
+        this.__processing = processingMessage || this.text('processando');
         const res = await this.API.POST(this.getUrl(action), data);
         callback = callback || (() => {});
 
@@ -391,8 +409,7 @@ class Entity {
         return Promise.reject({error: true, status:0, data: this.text('erro inesperado'), exception: error});
     }
 
-    async save(delay = 300, preserveValues = true) {
-        this.__processing = this.text('salvando');
+    async save(delay = 300, preserveValues = true, forceSave) {
         if(!this.id) {
             preserveValues = false;
         }
@@ -407,6 +424,7 @@ class Entity {
             this.rejecters.push(reject);
 
             this.__saveTimeout = setTimeout(async () => {
+                this.__processing = this.text('salvando');
                 try {
                     const data = this.data(true);
                     if(JSON.stringify(data) == '{}') {
@@ -414,24 +432,25 @@ class Entity {
                         for(let resolve of this.resolvers) {
                             resolve(response);
                         }
-
+                        this.sendMessage(this.text('modificacoes salvas'));
                         this.__processing = false;
                         return;
                     }
 
-                    const res = await this.API.persistEntity(this);                    
+                    const res = await this.API.persistEntity(this, forceSave);                    
                     this.doPromise(res, (entity) => {
                         if (this.id) {
                             this.sendMessage(this.text('modificacoes salvas'));
                         } else {
                             this.sendMessage(this.text('entidade salva'));
                         }
-                        this.populate(entity, preserveValues);
+                        this.populate(entity, preserveValues, data);
 
                     }).then((response) => {
                         for(let resolve of this.resolvers) {
                             resolve(response);
                         }
+                        this.cleanErrors();
                     }).catch((error) => {
                         for(let reject of this.rejecters) {
                             reject(error);
@@ -578,7 +597,7 @@ class Entity {
                 return file;
             });
         } catch (error) {
-            this.doCatch(error);
+            return this.doCatch(error);
         }
     }
 
@@ -763,6 +782,16 @@ class Entity {
             });
         } catch (error) {
             return this.doCatch(error);
+        }
+    }
+
+    getHumanReadable(prop) {
+        const propDefinitions = this.$PROPERTIES[prop];
+
+        if(!propDefinitions?.options) {
+            return this[prop]
+        }else {
+            return propDefinitions.options[this[prop]];
         }
     }
 }

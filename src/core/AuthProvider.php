@@ -2,6 +2,7 @@
 namespace MapasCulturais;
 
 use MapasCulturais\Entities\Notification;
+use MapasCulturais\Exceptions\PermissionDenied;
 
 /**
  * @property Entities\User|GuestUser $authenticatedUser
@@ -28,7 +29,12 @@ abstract class AuthProvider {
 
         $app->hook('auth.successful', function() use($app){
             $user = $app->user;
-            $user->getEntitiesNotifications($app);
+
+            $preventOverhead = (bool) ($user->metadata['preventOverhead'] ?? false);
+            if (!$preventOverhead) {
+                $user->getEntitiesNotifications($app);
+            }
+
             $user->lastLoginTimestamp = new \DateTime;
             $user->save(true);
         });

@@ -85,6 +85,20 @@ class Spreadsheet extends EvaluationsSpreadsheetJob
             $evaluation_data = $evaluation['evaluation']['evaluationData'] ?? [];
             $registration_data = $evaluation['registration'];
             
+            foreach ($evaluation_data as $key => &$value) {
+                if (is_array($value)) {
+                    $value = implode(", ", array_map(function($item) {
+                        return $item === "valid" ? i::__('Habilitado') : ($item === "invalid" ? i::__('Inabilitado') : $item);
+                    }, $value));
+                } else {
+                    if ($value === "valid") {
+                        $value = i::__('Habilitado');
+                    } elseif ($value === "invalid") {
+                        $value = i::__('Inabilitado');
+                    }
+                }
+            }
+
             $result[] = [
                 'projectName' => $registration_data['projectName'],
                 'category' => $registration_data['category'],
@@ -105,12 +119,12 @@ class Spreadsheet extends EvaluationsSpreadsheetJob
     }
 
     protected function _getFilename(Job $job) : string {
-        $entity_class_name = $job->entityClassName;
-        $label = $entity_class_name::getEntityTypeLabel(true);
+        $opportunity = i::__('oportunidade');
+        $opportunity_id = $job->owner->id;
         $extension = $job->extension;
         $date = date('Y-m-d H:i:s');
-
-        $result = "{$label}-{$date}.{$extension}";
+        
+        $result = "{$opportunity}-{$opportunity_id}--avaliacoes-{$date}.{$extension}";
 
         return $result;
     }

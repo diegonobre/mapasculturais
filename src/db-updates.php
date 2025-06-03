@@ -98,6 +98,14 @@ foreach($registered_taxonomies as $def){
 return [
     // SCHEME CHANGES =========================================
 
+    'create object_type enum type' => function () {
+        $object_types = implode(',', array_map(function($el) {
+            return "'$el'";
+        }, DoctrineEnumTypes\ObjectType::values()));
+
+        __exec("CREATE TYPE object_type AS ENUM($object_types)");
+    }, 
+
     'UPDATING ENUM TYPES' => function() use($conn) {
         $reg = \Acelaya\Doctrine\Type\PhpEnumType::getTypeRegistry();
         
@@ -716,14 +724,6 @@ return [
         }
     },
 
-    'create object_type enum type' => function () {
-        $object_types = implode(',', array_map(function($el) {
-            return "'$el'";
-        }, DoctrineEnumTypes\ObjectType::values()));
-
-        __exec("CREATE TYPE object_type AS ENUM($object_types)");
-    }, 
-
     'create permission_action enum type' => function () {
         $permission_actions = implode(',', array_map(function($el) {
             return "'$el'";
@@ -1049,8 +1049,134 @@ return [
         __exec("COMMENT ON FUNCTION pg_catalog.text(point) IS 'convert point to text';");
     },
 
+    'cria coluna is_tiebreaker na tabela registration_evaluation' => function () {
+        if(!__column_exists('registration_evaluation', 'is_tiebreaker')) {
+            __exec("ALTER TABLE registration_evaluation ADD is_tiebreaker BOOLEAN DEFAULT FALSE");
+        }
+    },
 
-    /// MIGRATIONS =========================================
+    'define default para as colunas ids das tabelas sem default' => function() {
+        __exec("ALTER TABLE agent_meta ALTER column id SET DEFAULT nextval('agent_meta_id_seq');");
+        __exec("ALTER TABLE space_meta ALTER column id SET DEFAULT nextval('space_meta_id_seq');");
+        __exec("ALTER TABLE project_meta ALTER column id SET DEFAULT nextval('project_meta_id_seq');");
+        __exec("ALTER TABLE event_meta ALTER column id SET DEFAULT nextval('event_meta_id_seq');");
+        __exec("ALTER TABLE subsite_meta ALTER column id SET DEFAULT nextval('subsite_meta_id_seq');");
+        __exec("ALTER TABLE evaluationmethodconfiguration_meta ALTER column id SET DEFAULT nextval('evaluationmethodconfiguration_meta_id_seq');");
+    },
+    
+    'Criação da coluna update timestemp' => function() use($conn) {
+
+        if(!__column_exists('registration', 'update_timestamp')){
+            __exec("ALTER TABLE registration ADD COLUMN update_timestamp TIMESTAMP");
+        }
+
+        $conn->executeQuery("
+           UPDATE registration r
+            SET update_timestamp = recent_revision.create_timestamp
+            FROM (
+                SELECT DISTINCT ON (object_id) object_id, create_timestamp
+                FROM entity_revision
+                WHERE object_type = 'MapasCulturais\Entities\Registration'
+                ORDER BY object_id, id DESC
+            ) AS recent_revision
+            WHERE r.id = recent_revision.object_id;
+        ");
+    },
+
+    'define a coluna id da tabela permission_cache_pending como auto incremet' => function() {
+        __exec("ALTER TABLE permission_cache_pending ALTER column id SET DEFAULT nextval('permission_cache_pending_seq');");
+    },
+
+    'altera o tipo da coluna valuers_exceptions_list da tabela registration para jsonb' => function () {
+        __exec("ALTER TABLE registration ALTER COLUMN valuers_exceptions_list DROP DEFAULT;"); 
+        __exec("ALTER TABLE registration ALTER COLUMN valuers_exceptions_list TYPE JSONB USING valuers_exceptions_list::JSONB");
+        __exec("ALTER TABLE registration ALTER COLUMN valuers_exceptions_list SET DEFAULT '{\"include\": [], \"exclude\": []}'::jsonb;"); 
+        __exec("CREATE INDEX registration_valuers_index ON registration USING GIN((valuers_exceptions_list->'include') jsonb_path_ops)");
+    },
+
+    'adiciona coluna valuers à tabela registration' => function () {
+        if(!__column_exists('registration', 'valuers')) {
+            __exec("ALTER TABLE registration ADD COLUMN valuers JSONB DEFAULT '{}'::jsonb NOT NULL");
+            __exec("CREATE INDEX registration_valuers_idx ON registration USING GIN((valuers) jsonb_path_ops)");
+        }
+    },
+
+    'adiciona coluna committee à tabela registration_evaluation' => function () {
+        if(!__column_exists('registration_evaluation', 'committee')) {
+            __exec("ALTER TABLE registration_evaluation ADD COLUMN committee VARCHAR(255)");
+
+            // define o valor da coluna committee
+            __exec("UPDATE registration_evaluation
+                    SET committee = com.committee,
+                        is_tiebreaker = (com.committee = '@tiebreaker')
+                    FROM
+                        (
+                            SELECT re.id, ar.type AS committee
+                            FROM registration_evaluation re
+                                LEFT JOIN usr u on u.id = re.user_id
+                                LEFT JOIN registration r on r.id = re.registration_id
+                                LEFT JOIN opportunity o on o.id = r.opportunity_id
+                                LEFT JOIN evaluation_method_configuration emc on emc.opportunity_id = o.id
+                                LEFT JOIN agent_relation ar on ar.object_type = 'MapasCulturais\Entities\EvaluationMethodConfiguration'
+                                    AND ar.object_id = emc.id
+                                    AND ar.agent_id = u.profile_id
+                        ) AS com
+                    WHERE registration_evaluation.id = com.id;");
+        }
+    },
+
+    "Cria coluna continuous_flow na tabela opportunity" => function() use ($conn) {
+        if (!__column_exists('opportunity', 'continuous_flow')) {
+            __exec("ALTER TABLE opportunity ADD COLUMN continuous_flow TIMESTAMP NULL");
+        }
+    },
+    'Cria a tabela da entidade RegistrationStep' => function () {
+        $app = App::i();
+        $em = $app->em;
+
+        $conn = $em->getConnection();
+
+        if (!__table_exists('registration_step')) {
+            if (!__sequence_exists('registration_step_seq')) {
+                $conn->executeQuery("CREATE SEQUENCE registration_step_seq START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;");
+            }
+
+            __exec("CREATE TABLE registration_step (
+                    id INT NOT NULL DEFAULT nextval('registration_step_seq'),
+                    name VARCHAR DEFAULT NULL,
+                    display_order INT NOT NULL DEFAULT 0,
+                    opportunity_id INT NOT NULL,
+                    create_timestamp TIMESTAMP(0) WITHOUT TIME ZONE DEFAULT NULL,
+                    update_timestamp TIMESTAMP(0) WITHOUT TIME ZONE DEFAULT NULL,
+                    PRIMARY KEY(id)
+                );"
+            );
+
+            __exec("CREATE INDEX IF NOT EXISTS IDX_registration_step__step_id ON registration_step (id);");
+            __try("ALTER TABLE registration_step ADD CONSTRAINT FK_registration_step__opportunity FOREIGN KEY (opportunity_id) REFERENCES opportunity (id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;");
+            __exec("CREATE INDEX IF NOT EXISTS IDX_registration_step__opportunity_id ON registration_step (opportunity_id);");
+        }
+
+        if (!__column_exists('registration_field_configuration', "step_id")) {
+            __exec("ALTER TABLE registration_field_configuration ADD COLUMN step_id INT NULL;");
+            __try("ALTER TABLE registration_field_configuration ADD CONSTRAINT FK_registration_field_configuration__registration_step FOREIGN KEY (step_id) REFERENCES registration_step (id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;");
+            __exec("CREATE INDEX IF NOT EXISTS IDX_registration_field_configuration__step_id ON registration_field_configuration (step_id);");
+        }
+
+        if (!__column_exists('registration_file_configuration', "step_id")) {
+            __exec("ALTER TABLE registration_file_configuration ADD COLUMN step_id INT NULL;");
+            __try("ALTER TABLE registration_file_configuration ADD CONSTRAINT FK_registration_file_configuration__registration_step FOREIGN KEY (step_id) REFERENCES registration_step (id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;");
+            __exec("CREATE INDEX IF NOT EXISTS IDX_registration_file_configuration__step_id ON registration_file_configuration (step_id);");
+        }
+    },
+    
+    'Adiciona coluna de metadados na tabela da entidade RegistrationStep' => function () {
+        if (!__column_exists('registration_step', 'metadata')) {
+            __try("ALTER TABLE registration_step ADD COLUMN metadata json DEFAULT '{}'::json NOT NULL");
+        }
+    },
+
+    /// MIGRATIONS - DATA CHANGES =========================================
 
     'migrate gender' => function() use ($conn) {
         $conn->executeQuery("UPDATE agent_meta SET value='Homem' WHERE key='genero' AND value='Masculino'");
@@ -1643,8 +1769,12 @@ $$
         
     },
 
-    'RECREATE VIEW evaluations AGAIN!!!!!!' => function() use($conn) {
-        __try("DROP VIEW evaluations");
+    'DROP MATERIALIZED VIEW evaluations!' => function () {
+        __try("DROP MATERIALIZED VIEW evaluations");
+    },
+
+    'Recria view evaluations!!!!!!' => function() use($conn) {
+        __try("DROP VIEW IF EXISTS evaluations");
 
         $conn->executeQuery("
             CREATE VIEW evaluations AS (
@@ -1657,6 +1787,7 @@ $$
                     opportunity_id,
                     valuer_user_id,
                     valuer_agent_id,
+                    valuer_committee,
                     max(evaluation_id) AS evaluation_id,
                     max(evaluation_result) AS evaluation_result,
                     max(evaluation_status) AS evaluation_status
@@ -1669,6 +1800,7 @@ $$
                         r.agent_id AS registration_agent_id, 
                         re.user_id AS valuer_user_id, 
                         u.profile_id AS valuer_agent_id, 
+                        r.valuers ->> u.id::varchar as valuer_committee,
                         r.opportunity_id,
                         re.id AS evaluation_id,
                         re.result AS evaluation_result,
@@ -1678,32 +1810,30 @@ $$
                             ON re.registration_id = r.id 
                         JOIN usr u 
                             ON u.id = re.user_id
-                        where 
-                            r.status > 0
-                    UNION
+                    WHERE 
+                        r.status > 0
+                UNION
                     SELECT 
                         r2.id AS registration_id, 
                         r2.sent_timestamp AS registration_sent_timestamp,
                         r2.number AS registration_number, 
                         r2.category AS registration_category,
                         r2.agent_id AS registration_agent_id, 
-                        p2.user_id AS valuer_user_id, 
+                        u2.id AS valuer_user_id, 
                         u2.profile_id AS valuer_agent_id, 
+                        r2.valuers ->> u2.id::varchar as valuer_committee,
                         r2.opportunity_id,
                         NULL AS evaluation_id,
                         NULL AS evaluation_result,
                         NULL AS evaluation_status
+                    
                     FROM registration r2 
-                        JOIN pcache p2 
-                            ON  p2.object_id = r2.id AND
-                                p2.object_type = 'MapasCulturais\Entities\Registration' AND 
-                                p2.action = 'evaluateOnTime'  
                         JOIN usr u2 
-                            ON u2.id = p2.user_id
+                            on jsonb_exists(r2.valuers, u2.id::varchar)
                         JOIN evaluation_method_configuration emc
                             ON emc.opportunity_id = r2.opportunity_id
-                        WHERE                          
-                            r2.status > 0
+                    WHERE                          
+                        r2.status = 1
                 ) AS evaluations_view 
                 GROUP BY
                     registration_id,
@@ -1713,9 +1843,14 @@ $$
                     registration_agent_id,
                     valuer_user_id,
                     valuer_agent_id,
+                    valuer_committee,
                     opportunity_id
             )
         ");
+    },
+
+    'delete job de refresh materialized view evaluations' => function() use($conn) {
+        __exec("DELETE FROM job WHERE name = 'RefreshViewEvaluations'");
     },
 
     'adiciona oportunidades na fila de reprocessamento de cache' => function () use($conn) {
@@ -1956,66 +2091,6 @@ $$
         }
     },
 
-
-    "migra valores das colunas do tipo array para do tipo json" => function() use ($conn) {
-        $fields = $conn->fetchAll("SELECT id, config, field_options, categories from registration_field_configuration");
-        $count = count($fields);
-
-        $json_validate = function (string $string): bool {
-            json_decode($string);
-            return json_last_error() === JSON_ERROR_NONE;
-        };
-        
-        $check_serialize = function($value) use ($json_validate) {
-            if((is_string($value) && $json_validate($value)) || !$value) {
-                return $value;
-            }
-
-            return json_encode(unserialize($value));
-        };
-
-        foreach($fields as $i => $field) {
-            echo "migrando registration_field_configuration ({$i} / $count)\n";
-            $field['config'] = $check_serialize($field['config']);
-            $field['field_options'] = $check_serialize($field['field_options']);
-            $field['categories'] = $check_serialize($field['categories']);
-
-            $conn->executeQuery("
-                UPDATE registration_field_configuration 
-                SET 
-                    config = :config, 
-                    field_options = :field_options, 
-                    categories = :categories
-                WHERE id = :id", $field);
-        }
-
-        $files = $conn->fetchAll("SELECT id, categories from registration_file_configuration");
-        $count = count($files);
-        foreach($files as $i => $file) {
-            echo "migrando registration_file_configuration ({$i} / $count)\n";
-            $file['categories'] = $check_serialize($file['categories']);
-
-            $conn->executeQuery("
-                UPDATE registration_file_configuration 
-                SET categories = :categories
-                WHERE id = :id", $file);
-        }
-
-        $requests = $conn->fetchAll("SELECT id, metadata from request");
-        $count = count($requests);
-        foreach($requests as $i => $request) {
-            echo "migrando request ({$i} / $count)\n";
-            $id = $request['id'];
-            $metadata = $check_serialize($request['metadata']);
-
-            $conn->executeQuery("
-                UPDATE request 
-                SET metadata = ':metadata'
-                WHERE id = $id", ['metadata'=>$metadata]);
-        }
-    },
-
-
     'Ajusta as colunas registration_proponent_types, registration_ranges e registration_categories das oportuniodades para setar um array vazio quando as mesmas estiverem null' => function() use ($conn, $app){
         __exec("UPDATE opportunity set registration_proponent_types = '[]' WHERE registration_proponent_types IS null OR registration_proponent_types::VARCHAR = '\"\"'");
         __exec("UPDATE opportunity set registration_ranges = '[]' WHERE registration_ranges IS null OR registration_ranges::VARCHAR = '\"\"'");
@@ -2156,6 +2231,63 @@ $$
         __exec("UPDATE project SET update_timestamp = create_timestamp WHERE update_timestamp IS null");
         __exec("UPDATE opportunity SET update_timestamp = create_timestamp WHERE update_timestamp IS NULL");
         __exec("UPDATE EVENT SET update_timestamp = create_timestamp WHERE update_timestamp IS NULL");
+    },
+    "migra valores das colunas do tipo array para do tipo json" => function() use ($conn) {
+        $fields = $conn->fetchAll("SELECT id, config, field_options, categories from registration_field_configuration");
+        $count = count($fields);
+
+        $json_validate = function (string $string): bool {
+            json_decode($string);
+            return json_last_error() === JSON_ERROR_NONE;
+        };
+        
+        $check_serialize = function($value) use ($json_validate) {
+            if((is_string($value) && $json_validate($value)) || !$value) {
+                return $value;
+            }
+
+            return json_encode(unserialize($value));
+        };
+
+        foreach($fields as $i => $field) {
+            echo "migrando registration_field_configuration ({$i} / $count)\n";
+            $field['config'] = $check_serialize($field['config']);
+            $field['field_options'] = $check_serialize($field['field_options']);
+            $field['categories'] = $check_serialize($field['categories']);
+
+            $conn->executeQuery("
+                UPDATE registration_field_configuration 
+                SET 
+                    config = :config, 
+                    field_options = :field_options, 
+                    categories = :categories
+                WHERE id = :id", $field);
+        }
+
+        $files = $conn->fetchAll("SELECT id, categories from registration_file_configuration");
+        $count = count($files);
+        foreach($files as $i => $file) {
+            echo "migrando registration_file_configuration ({$i} / $count)\n";
+            $file['categories'] = $check_serialize($file['categories']);
+
+            $conn->executeQuery("
+                UPDATE registration_file_configuration 
+                SET categories = :categories
+                WHERE id = :id", $file);
+        }
+
+        $requests = $conn->fetchAll("SELECT id, metadata from request");
+        $count = count($requests);
+        foreach($requests as $i => $request) {
+            echo "migrando request ({$i} / $count)\n";
+            $id = $request['id'];
+            $metadata = $check_serialize($request['metadata']);
+
+            $conn->executeQuery("
+                UPDATE request 
+                SET metadata = :metadata
+                WHERE id = $id", ['metadata'=>$metadata]);
+        }
     },
 
     'corrige permissão de avaliadores que tem avaliação mas não possui permissão de avaliar pela regra configurada' => function() use($conn) {
@@ -2349,4 +2481,121 @@ $$
         __try('CREATE INDEX file_parent_object_type_idx ON file (parent_id, object_type)');
     },
 
+    'deleta requests com valores dos da coluna metadata inválidos' => function() use($conn) {
+        __exec("delete from request where metadata = ':metadata'");
+    },
+    
+    "Renomeia a comissão de avaliação" => function () use($conn) {
+        $name = i::__('Comissão de avaliação');
+        $conn->executeQuery("
+            UPDATE agent_relation 
+            SET type = :type 
+            WHERE 
+                type = 'group-admin' AND 
+                object_type = 'MapasCulturais\Entities\EvaluationMethodConfiguration'
+        ", ['type' => $name]);
+    },
+    
+    'Limpa entradas duplicadas na tabela pcache e cria novos indices' => function() use($conn) {
+        __exec("DELETE 
+                FROM 
+                    pcache T1
+                USING 
+                    pcache T2 
+                WHERE 
+                    T1.id < T2.id AND
+                    T1.object_type = T2.object_type AND
+                    T1.object_id = T2.object_id AND
+                    T1.action = T2.action AND
+                    T1.user_id = T2.user_id
+        ");
+
+        __exec("CREATE UNIQUE INDEX unique_object_action ON pcache (object_type, object_id, action, user_id)");
+    },
+
+    'Atualiza coluna parent_id do agente com id do agente principal' => function(){
+        __exec("UPDATE agent SET parent_id = (SELECT profile_id FROM usr WHERE id = agent.user_id AND profile_id <> agent.id)");
+    },
+
+    'Apaga entradas duplicadas na tabela de avaliação e cria indice unique para a avaliação vs avaliador' => function(){
+
+        __exec("DELETE 
+                FROM 
+                    registration_evaluation T1
+                USING 
+                    registration_evaluation T2 
+                WHERE 
+                    T1.id < T2.id AND
+                    T1.registration_id = T2.registration_id AND
+                    T1.user_id = T2.user_id
+        ");
+
+        __exec("CREATE UNIQUE INDEX unique_evaluation_user_id ON registration_evaluation (registration_id, user_id)");
+    },
+
+    'cria novos índices em diversas tabelas ' => function() {
+        __exec('CREATE INDEX idx_usr_profile ON usr (profile_id);');
+        __exec('CREATE INDEX id_agent_relation_agent ON agent_relation (agent_id);');
+        __exec('CREATE INDEX idx_space_agent_id ON space (agent_id);');
+        __exec('CREATE INDEX idx_event_agent_id ON event (agent_id);');
+        __exec('CREATE INDEX idx_seal_relation_agent_id ON seal_relation (agent_id);');
+        __exec('CREATE INDEX idx_seal_relation_owner_id ON seal_relation (owner_id);');
+        __exec('CREATE INDEX idx_seal_relation_object ON seal_relation (object_type, object_id);');
+        __exec('CREATE INDEX idx_project_agent_id ON project (agent_id);');
+        __exec('CREATE INDEX idx_project_type ON project (type);');
+        __exec('CREATE INDEX idx_registration_meta_key ON registration_meta (key);');
+        __exec('CREATE INDEX idx_opportunity_meta_key ON registration_meta (key);');
+        __exec('CREATE INDEX idx_agent_usr ON agent (user_id);');
+    },
+
+    'define valores default para as colunas ids das tabelas sem default' => function() {
+        __exec("ALTER TABLE agent_meta ALTER column id SET DEFAULT nextval('agent_meta_id_seq');");
+        __exec("ALTER TABLE space_meta ALTER column id SET DEFAULT nextval('space_meta_id_seq');");
+        __exec("ALTER TABLE project_meta ALTER column id SET DEFAULT nextval('project_meta_id_seq');");
+        __exec("ALTER TABLE event_meta ALTER column id SET DEFAULT nextval('event_meta_id_seq');");
+        __exec("ALTER TABLE subsite_meta ALTER column id SET DEFAULT nextval('subsite_meta_id_seq');");
+        __exec("ALTER TABLE evaluationmethodconfiguration_meta ALTER column id SET DEFAULT nextval('evaluationmethodconfiguration_meta_id_seq');");
+        __exec("ALTER TABLE permission_cache_pending ALTER column id SET DEFAULT nextval('permission_cache_pending_seq');");
+    },
+
+    'refatoração dos índices da tabela pcache' => function () {
+        __exec('CREATE INDEX pcache_object_user_action_idx ON pcache (user_id, object_type, action)');
+
+        // remove índice duplicado
+        // "pcache_permission_user_idx" btree (object_type, object_id, action, user_id)
+        // "unique_object_action" UNIQUE, btree (object_type, object_id, action, user_id)
+        __exec('DROP INDEX pcache_permission_user_idx');
+    },
+
+    'remove entradas da tabela pcache não mais utilizadas' => function () {
+        __exec("
+            DELETE FROM pcache 
+            WHERE action NOT IN (
+                '@control',
+                'modify',
+                'view',
+                'applySeal',
+                'support',
+                'viewUserEvaluation',
+                'evaluateOnTime',
+                'evaluateRegistrations',
+                'createEvents',
+                'requestEventRelation');");
+    },
+
+    'Atualiza o consolidated_result das inscrições com valores salvos em portuguêss' => function () {
+        __exec("
+            UPDATE registration r
+            SET consolidated_result = CASE
+                WHEN r.consolidated_result = 'Habilitado' THEN 'valid'
+                WHEN r.consolidated_result = 'Inabilitado' THEN 'invalid'
+                ELSE r.consolidated_result
+            END
+            FROM evaluation_method_configuration emc
+            WHERE r.opportunity_id = emc.opportunity_id
+                AND emc.type = 'qualification'
+                AND r.consolidated_result IN ('Habilitado', 'Inabilitado')
+        ");
+    }
+    
 ] + $updates ;   

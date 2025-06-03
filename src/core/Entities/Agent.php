@@ -5,7 +5,7 @@ namespace MapasCulturais\Entities;
 use Doctrine\ORM\Mapping as ORM;
 use MapasCulturais\Traits;
 use MapasCulturais\App;
-
+use MapasCulturais\UserInterface;
 
 /**
  * Agent
@@ -279,11 +279,24 @@ class Agent extends \MapasCulturais\Entity
 
 
     /**
-     * Constructor
+     * 
+     * @param null|UserInterface $user 
+     * @param null|int $type 
      */
-    public function __construct($user = null) {
-        $this->user = $user ? $user : App::i()->user;
-        $this->type = 1;
+    public function __construct(?UserInterface $user = null, ?int $type = 1) {
+        $app = App::i();
+        if(!$user && !$app->user->is('guest')) {
+            $user = $app->user;
+        }
+
+        if($user instanceof User) {
+            $this->user = $user ? $user : App::i()->user;
+            if($parent = $user->profile) {
+                $this->parentId = $parent->id;
+            }
+        }
+
+        $this->type = $type;
 
         parent::__construct();
     }
@@ -415,13 +428,14 @@ class Agent extends \MapasCulturais\Entity
             $parent = $app->repo('Agent')->find($parent);
         }
 
-        if($parent->equals($this->parent)) {
+        if($this->parent && $parent->equals($this->parent)) {
             return true;
-        }
+        } 
 
-        $this->nestedSetParent($parent);
-        if($parent)
+        if($parent) {
+            $this->nestedSetParent($parent);
             $this->setUser($parent->user);
+        }
     }
 
     function getParent(){
@@ -494,7 +508,7 @@ class Agent extends \MapasCulturais\Entity
     protected function canUserRemove($user){
 
         if($this->isUserProfile){
-            if($this->user->isDeleting){
+            if($this->user->isDeleting || $user->is('admin')){
                 return true;
             } else {
                 return false;
