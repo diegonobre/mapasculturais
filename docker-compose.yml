@@ -1,13 +1,10 @@
 version: '2'
 services:
   mapas:
-    env_file:
-      - .env
     build:
       context: ./
       dockerfile: docker/Dockerfile
     volumes:
-      - ./.env:/.env
       - ./docker/production/php.ini:/usr/local/etc/php/php.ini
       - ./docker/production/www.conf:/usr/local/etc/php-fpm.d/www.conf
 
