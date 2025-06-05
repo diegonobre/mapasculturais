@@ -4,28 +4,28 @@ services:
     env_file:
       - .env
     build:
-      context: $(pwd)/
+      context: ${pwd}/
       dockerfile: docker/Dockerfile
     volumes:
-      - $(pwd)/docker/production/php.ini:/usr/local/etc/php/php.ini
-      - $(pwd)/docker/production/www.conf:/usr/local/etc/php-fpm.d/www.conf
+      - ${pwd}/docker/production/php.ini:/usr/local/etc/php/php.ini
+      - ${pwd}/docker/production/www.conf:/usr/local/etc/php-fpm.d/www.conf
 
       # scripts principais
-      - $(pwd)/docker/entrypoint.sh:/entrypoint.sh
-      - $(pwd)/docker/jobs-cron.sh:/jobs-cron.sh
-      - $(pwd)/docker/recreate-pending-pcache-cron.sh:/recreate-pending-pcache-cron.sh
+      - ${pwd}/docker/entrypoint.sh:/entrypoint.sh
+      - ${pwd}/docker/jobs-cron.sh:/jobs-cron.sh
+      - ${pwd}/docker/recreate-pending-pcache-cron.sh:/recreate-pending-pcache-cron.sh
 
-      - $(pwd)/composer.json:/var/www/composer.json
-      - $(pwd)/composer.lock:/var/www/composer.lock
+      - ${pwd}/composer.json:/var/www/composer.json
+      - ${pwd}/composer.lock:/var/www/composer.lock
 
-      - $(pwd)/config:/var/www/config
-      - $(pwd)/public:/var/www/html
-      - $(pwd)/scripts:/var/www/scripts
-      - $(pwd)/var:/var/www/var
+      - ${pwd}/config:/var/www/config
+      - ${pwd}/public:/var/www/html
+      - ${pwd}/scripts:/var/www/scripts
+      - ${pwd}/var:/var/www/var
 
-      - $(pwd)/docker-data/assets:/var/www/html/assets
-      - $(pwd)/docker-data/public-files:/var/www/html/files
-      - $(pwd)/docker-data/private-files:/var/www/var/private-files
+      - ${pwd}/docker-data/assets:/var/www/html/assets
+      - ${pwd}/docker-data/public-files:/var/www/html/files
+      - ${pwd}/docker-data/private-files:/var/www/var/private-files
 
     links:
       - db
@@ -50,7 +50,7 @@ services:
     restart: unless-stopped
     command: --maxmemory 512Mb --maxmemory-policy allkeys-lru
     volumes:
-      - $(pwd)/docker-data/sessions:/data
+      - ${pwd}/docker-data/sessions:/data
 
   db:
     image: postgis/postgis:14-master
@@ -60,15 +60,15 @@ services:
       - POSTGRES_USER=mapas
       - POSTGRES_DB=mapas
     volumes:
-      - $(pwd)/docker/db:/docker-entrypoint-initdb.d
-      - $(pwd)/docker-data/db-data:/var/lib/postgresql/data
+      - ${pwd}/docker/db:/docker-entrypoint-initdb.d
+      - ${pwd}/docker-data/db-data:/var/lib/postgresql/data
 
   certbot:
     image: certbot/certbot
     restart: unless-stopped
     volumes:
-      - $(pwd)/docker-data/certs/conf:/etc/letsencrypt
-      - $(pwd)/docker-data/certs/www:/var/www/certbot
+      - ${pwd}/docker-data/certs/conf:/etc/letsencrypt
+      - ${pwd}/docker-data/certs/www:/var/www/certbot
     entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
 
   nginx:
@@ -77,16 +77,16 @@ services:
     volumes:
       - /dev/null:/var/www/html/index.php
 
-      - $(pwd)/docker-data/public-files:/var/www/html/files
-      - $(pwd)/docker-data/assets:/var/www/html/assets
+      - ${pwd}/docker-data/public-files:/var/www/html/files
+      - ${pwd}/docker-data/assets:/var/www/html/assets
 
 ##### versão sem ssl
-      # - $(pwd)/docker/production/nginx.conf:/etc/nginx/conf.d/default.conf
+      # - ${pwd}/docker/production/nginx.conf:/etc/nginx/conf.d/default.conf
 
 ##### versão com ssl
-      - $(pwd)/docker/production/nginx-ssl.conf:/etc/nginx/conf.d/default.conf
-      - $(pwd)/docker-data/certs/conf:/etc/letsencrypt
-      - $(pwd)/docker-data/certs/www:/var/www/certbot
+      - ${pwd}/docker/production/nginx-ssl.conf:/etc/nginx/conf.d/default.conf
+      - ${pwd}/docker-data/certs/conf:/etc/letsencrypt
+      - ${pwd}/docker-data/certs/www:/var/www/certbot
     ports:
      - "80:80"
     depends_on:
