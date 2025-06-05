@@ -29,16 +29,12 @@ services:
       - ./docker-data/private-files:/var/www/var/private-files
 
     links:
+      - db
       - redis
       - sessions
 
-    environment:
-      - BUILD_ASSETS=1
-
-      - REDIS_CACHE=redis
-      - SESSIONS_SAVE_PATH=tcp://sessions:6379
-
     depends_on:
+      - db
       - redis
       - sessions
 
@@ -57,6 +53,25 @@ services:
     volumes:
       - ./docker-data/sessions:/data
 
+  db:
+    image: postgis/postgis:14-master
+    restart: unless-stopped
+    environment:
+      - POSTGRES_PASSWORD=mapas
+      - POSTGRES_USER=mapas
+      - POSTGRES_DB=mapas
+    volumes:
+      - ./docker/db:/docker-entrypoint-initdb.d
+      - ./docker-data/db-data:/var/lib/postgresql/data
+
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    volumes:
+      - ./docker-data/certs/conf:/etc/letsencrypt
+      - ./docker-data/certs/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
   nginx:
     image: nginx:latest
     restart: unless-stopped
@@ -67,16 +82,15 @@ services:
       - ./docker-data/assets:/var/www/html/assets
 
 ##### versão sem ssl
-      - ./docker/production/nginx.conf:/etc/nginx/conf.d/default.conf
+      # - ./docker/production/nginx.conf:/etc/nginx/conf.d/default.conf
 
 ##### versão com ssl
-#     - ./docker/production/nginx-ssl.conf:/etc/nginx/conf.d/default.conf
-#     - ./docker-data/certs/conf:/etc/letsencrypt
-#     - ./docker-data/certs/www:/var/www/certbot
+      - ./docker/production/nginx-ssl.conf:/etc/nginx/conf.d/default.conf
+      - ./docker-data/certs/conf:/etc/letsencrypt
+      - ./docker-data/certs/www:/var/www/certbot
     ports:
      - "80:80"
     depends_on:
       - mapas
     links:
       - mapas
-
