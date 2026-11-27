@@ -16,7 +16,8 @@ return [
 
     ex: `https://mapacultural.com.br/`
     */
-    'base.url' => env('BASE_URL', ''),
+    // garante a barra final: o sistema concatena caminhos diretamente em base.url (ex.: base.url . 'assets/')
+    'base.url' => env('BASE_URL', '') ? rtrim(env('BASE_URL'), '/') . '/' : '',
 
     /* Nome do site. É utilizado para a formação dos títulos das páginas. */
     'app.siteName' => env('SITE_NAME', i::__('Mapas Culturais')),
