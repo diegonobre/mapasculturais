@@ -185,6 +185,10 @@ class Utils {
         $result = null;
 
         if($value){
+            // Tratamento especial para Spotify
+            if (strpos(strtolower($domain), 'spotify') !== false) {
+                return self::parseSpotifyUrl($value);
+            }
 
             $domain = preg_quote($domain);
             
@@ -198,14 +202,57 @@ class Utils {
             if (preg_match("~{$domain}/in/([-_\w\d]+)~i", $_value, $matches)) {
                 $result = $matches[1];
             }
-            if (preg_match("~^open\.spotify\.com/user/([-_\w\d]+)~i", $_value, $matches)) {
-                $result = $matches[1];
-            }
+           
             else if(preg_match("/^((@|channel\/)?[-\w\d\.]+)$/i", $_value, $matches)){
                 $result = $matches[1];
             }
         }
         return $result;
+    }
+
+    /**
+     * Parser específico para URLs do Spotify
+     * Suporta URLs com intl-pt, query params e diferentes tipos (user, artist, playlist, show)
+     * 
+     * @param string $value URL ou identificador do Spotify
+     * @return string|null Identificador parseado no formato "type:id" ou apenas "id" para user
+     */
+    static function parseSpotifyUrl(string $value): ?string {
+        if (empty($value)) {
+            return null;
+        }
+
+        $normalized = preg_replace("~^(?:https?://)?(?:www\.)?~i", "", trim($value));
+        $normalized = preg_replace("~[?#].*$~", "", $normalized);
+        $normalized = rtrim($normalized, '/');
+
+        $normalized = preg_replace("~/(?:intl|locale)-[a-z]{2}(?:-[a-z]{2})?/~i", "/", $normalized);
+        
+        // 1. URL completa com tipo (prioridade)
+        if (preg_match('~open\.spotify\.com/(user|artist|playlist|show|album|track)/([a-zA-Z0-9]+)~i', $normalized, $matches)) {
+            $type = strtolower($matches[1]);
+            $id = $matches[2];
+            return ($type === 'user') ? $id : "{$type}:{$id}";
+        }
+
+        // 2. Tipo e ID sem domínio (ex: "artist/5Wttygr6TdiJxNyQCwhqwH")
+        if (preg_match('~^(user|artist|playlist|show|album|track)/([a-zA-Z0-9]+)$~i', $normalized, $matches)) {
+            $type = strtolower($matches[1]);
+            $id = $matches[2];
+            return ($type === 'user') ? $id : "{$type}:{$id}";
+        }
+
+        // 3. Formato já parseado (type:id)
+        if (preg_match('~^(user|artist|playlist|show|album|track):([a-zA-Z0-9]+)$~i', $normalized, $matches)) {
+            return $normalized; // Já está no formato correto
+        }
+
+        // 4. ID simples (assume user para compatibilidade)
+        if (preg_match('~^([a-zA-Z0-9]+)$~', $normalized, $matches)) {
+            return $matches[1];
+        }
+
+        return null;
     }
 
     /**
@@ -234,12 +281,12 @@ class Utils {
     static function detectDateFormat(string $dateString): string | bool
     {
         $patterns = [
-            'd/m/Y' => '/^\d{2}\/\d{2}\/\d{4}$/', // dd/mm/yyyy
-            'm/d/Y' => '/^\d{2}\/\d{2}\/\d{4}$/', // mm/dd/yyyy
-            'Y-m-d' => '/^\d{4}-\d{2}-\d{2}$/',    // yyyy-mm-dd
-            'd-m-Y' => '/^\d{2}-\d{2}-\d{4}$/',    // dd-mm-yyyy
-            'm-d-Y' => '/^\d{2}-\d{2}-\d{4}$/',    // mm-dd-yyyy
-            'Y/m/d' => '/^\d{4}\/\d{2}\/\d{2}$/'    // yyyy/mm/dd
+            'd/m/Y' => '/^\d{1,2}\/\d{1,2}\/\d{4}$/', // dd/mm/yyyy
+            'm/d/Y' => '/^\d{1,2}\/\d{2}\/\d{4}$/', // mm/dd/yyyy
+            'Y-m-d' => '/^\d{4}-\d{1,2}-\d{1,2}$/',    // yyyy-mm-dd
+            'd-m-Y' => '/^\d{1,2}-\d{1,2}-\d{4}$/',    // dd-mm-yyyy
+            'm-d-Y' => '/^\d{1,2}-\d{1,2}-\d{4}$/',    // mm-dd-yyyy
+            'Y/m/d' => '/^\d{4}\/\d{1,2}\/\d{1,2}$/'    // yyyy/mm/dd
         ];
 
         foreach ($patterns as $format => $pattern) {
@@ -250,4 +297,56 @@ class Utils {
 
         return false;
     }
+
+    /**
+     * Retorna o MIME type de um arquivo
+     *
+     * @param string $path
+     * @return string
+     */
+    static function getMimeType(string $path): string
+    {
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mime = finfo_file($finfo, $path); 
+        finfo_close($finfo);
+
+        return $mime;
+    }
+
+    /**
+     * Sanitiza uma string (ou array de strings), removendo acentos, ajustando o case e limpando espaços.
+     *
+     * - Se o input for um array, aplica recursivamente nos valores.
+     * - Remove acentos e espaços em excesso.
+     * - Converte para letras minúsculas ou maiúsculas conforme o parâmetro $case.
+     *
+     * @param string|array $input A string ou array de strings a serem normalizadas.
+     * @param string $case Define o case final da string. Pode ser 'lower' (padrão) ou 'upper'.
+     *
+     * @return string|array A string (ou array) sanitizada.
+     */
+    public static function sanitizeString(string|array $input, string $case = 'lower', bool $removeSpecials = false): string|array
+    {
+        if (is_array($input)) {
+            $result = [];
+            foreach ($input as $key => $value) {
+                $result[$key] = self::sanitizeString($value, $case, $removeSpecials);
+            }
+            return $result;
+        }
+
+        $input = mb_convert_encoding((string)$input, 'UTF-8', mb_detect_encoding($input));
+
+        $input = self::removeAccents($input);
+
+        if ($removeSpecials) {
+            $input = preg_replace('/[^\p{L}\p{N}\s]/u', '', $input); // remove tudo que não for letra, número ou espaço
+        }
+
+        $input = trim($input);
+
+        return $case === 'upper' ? mb_strtoupper($input, 'UTF-8') : mb_strtolower($input, 'UTF-8');
+    }
+
+
 }

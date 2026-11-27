@@ -1,0 +1,164 @@
+app.component('opportunity-appeal-phase-config' , {
+    template: $TEMPLATES['opportunity-appeal-phase-config'],
+
+    setup() {
+        const text = Utils.getTexts('opportunity-appeal-phase-config');
+        return { text };
+    },
+
+    props: {
+        phase: {
+            type: Entity,
+            required: true
+        },
+
+        phases: {
+            type: Array,
+            required: true
+        },
+
+        tab: {
+            type: String,
+        },
+    },
+
+    data() {
+        return {
+            processing: false,
+            phaseData: {},
+            entity: null,
+            moreResponse: false,   
+        }
+    },
+
+    mounted() {
+        this.initializeAppealPhase();
+    },
+
+    computed: {
+        firstPhase() {
+            return this.phases[0];
+        },
+
+        lastPhase() {
+            const lastPhase = this.phases[this.phases.length - 1];
+            if (lastPhase.isLastPhase) {
+                return lastPhase;
+            }
+        },
+
+        fromDateMin() {
+            return this.phase.publishTimestamp || this.phase.registrationFrom || this.phase.evaluationMethodConfiguration?.evaluationFrom;
+        },
+
+        fromDateMax() {
+            return null;
+        },
+
+        toDateMin() {
+            return this.phase.appealPhase?.registrationFrom || this.phase.appealPhase?.evaluationMethodConfiguration?.evaluationFrom;
+        },
+
+        toDateMax() {
+            return null;
+        },
+    },
+
+    methods: {
+        async createAppealPhase() {
+            this.processing = true;
+            const messages = useMessages();
+        
+            const target = this.phase.__objectType === 'evaluationmethodconfiguration' 
+                ? this.phase.opportunity 
+                : this.phase;
+        
+            let args = {};
+        
+            await target.POST('createAppealPhase', args)
+                .then((data) => {
+                    this.phaseData = data;
+
+                    this.entity = Entity.fromJson(data);
+                    this.phase.appealPhase = this.entity;
+                    this.processing = false;
+        
+                    messages.success(this.text('Fase de recurso criada com sucesso'));
+                })
+                .catch((error) => {
+                    messages.error(error.data);
+                    this.processing = false;
+                });
+        },
+
+        async initializeAppealPhase() {
+            const appealPhaseRef = this.phase?.appealPhase ?? this.phase?.opportunity?.appealPhase;
+            if (!appealPhaseRef?.id) {
+                this.entity = null;
+                return;
+            }
+
+            if (appealPhaseRef instanceof Entity) {
+                this.entity = appealPhaseRef;
+            } else {
+                this.entity = Entity.fromJson({ '@entityType': 'opportunity', ...appealPhaseRef });
+            }
+
+            const api = new API('opportunity');
+            const select = 'appealPhaseAffectsSync,showPreviousPhaseEvaluationDetails,allow_proponent_response';
+            const url = api.createApiUrl('findOne', { id: `EQ(${appealPhaseRef.id})`, '@select': select });
+
+            try {
+                const response = await api.GET(url);
+                const data = await response.json();
+
+                if (!response.ok || data?.error) {
+                    throw data;
+                }
+
+                const metadataFields = [
+                    'appealPhaseAffectsSync',
+                    'showPreviousPhaseEvaluationDetails',
+                    'allow_proponent_response',
+                ];
+
+                for (const field of metadataFields) {
+                    if (Object.prototype.hasOwnProperty.call(data, field)) {
+                        // sem linha no banco a API devolve null; usa o default do metadado, como o backend
+                        const value = data[field] ?? this.entity.$PROPERTIES[field]?.default ?? null;
+                        this.entity[field] = value;
+                        this.entity.__originalValues[field] = value;
+                    }
+                }
+            } catch (error) {
+                // mantém entidade já carregada das fases
+            }
+
+            if (this.phase?.appealPhase) {
+                this.phase.appealPhase = this.entity;
+            }
+            if (this.phase?.opportunity?.appealPhase) {
+                this.phase.opportunity.appealPhase = this.entity;
+            }
+        },
+
+        async deleteAppealPhase() {
+            const messages = useMessages();
+            this.processing = true;
+            const entity = this.entity;
+
+            try {
+                this.entity = null;
+                await entity.destroy();
+                messages.success(this.text('Fase de recurso excluída com sucesso'));
+                
+            } catch (error) {
+                this.entity = entity;
+                messages.error(error);
+            }
+
+            this.processing = false;         
+        }
+
+    }
+});

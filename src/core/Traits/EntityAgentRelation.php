@@ -4,6 +4,7 @@ namespace MapasCulturais\Traits;
 use Doctrine\ORM\Exception\NotSupported;
 use MapasCulturais\App,
     MapasCulturais\Entities\Agent;
+use MapasCulturais\Entities\AgentRelation;
 use MapasCulturais\Entities\User;
 use MapasCulturais\Exceptions\PermissionDenied;
 use RuntimeException;
@@ -20,6 +21,8 @@ use RuntimeException;
  *
  */
 trait EntityAgentRelation {
+
+    const AGENT_RELATION_ADMIN_GROUP = 'group-admin';
 
     public static function usesAgentRelation(){
         return true;
@@ -228,7 +231,7 @@ trait EntityAgentRelation {
         return in_array($user->id, $ids);
     }
 
-    function createAgentRelation(\MapasCulturais\Entities\Agent $agent, $group, $has_control = false, $save = true, $flush = true){
+    function createAgentRelation(\MapasCulturais\Entities\Agent $agent, $group, $has_control = false, $save = true, $flush = true): AgentRelation {
         $relation_class = $this->getAgentRelationEntityClassName();
         $relation = new $relation_class;
         $relation->agent = $agent;
@@ -266,7 +269,7 @@ trait EntityAgentRelation {
 
         $app = App::i();
         
-        if($old_name === 'group-admin') {
+        if($old_name === self::AGENT_RELATION_ADMIN_GROUP) {
             return false;
         }
         
@@ -294,7 +297,7 @@ trait EntityAgentRelation {
 
         $app = App::i();
 
-        if($name === 'group-admin') {
+        if($name === self::AGENT_RELATION_ADMIN_GROUP) {
             return false;
         }
 

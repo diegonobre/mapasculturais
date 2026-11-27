@@ -22,7 +22,8 @@ return [
                 'client_id' => env('AUTH_GOOGLE_CLIENT_ID', null),
                 'client_secret' => env('AUTH_GOOGLE_CLIENT_SECRET', null),
                 'redirect_uri' => env('BASE_URL', '') . 'autenticacao/google/oauth2callback',
-                'scope' => env('AUTH_GOOGLE_SCOPE', 'email'),
+                'scope' => env('AUTH_GOOGLE_SCOPE', 'email profile'),
+                'prompt' => env('AUTH_GOOGLE_PROMPT', null),
             ],
 
             'LinkedIn' => [
@@ -50,6 +51,7 @@ return [
         'scope' => env('AUTH_AUTHENTIK_SCOPE', 'openid profile email'),
         'login_url' => env('AUTH_AUTHENTIK_LOGIN_URL', ''),
         'login_url' => env('AUTH_AUTHENTIK_LOGOUT_URL', ''),
+        'change_password_url' => env('AUTH_AUTHENTIK_CHANGE_PASSWORD_URL', null),
     ]
      */
 ];

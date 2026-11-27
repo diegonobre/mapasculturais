@@ -172,6 +172,31 @@ class Module extends \MapasCulturais\Module {
         });
 
         /**
+         * Executa o init dos componentes
+         */
+        $app->hook('mapas.printJsObject:before', function () use($self, $app) {
+            /** @var \MapasCulturais\Themes\BaseV2\Theme $this */
+            foreach($this->importedComponents as $component) {
+                $init_file = $this->resolveFilename("components/{$component}", 'init.php');
+                if(!$init_file) {
+                    continue;
+                }
+
+                extract($this->data);
+
+                $started_at = microtime(true);
+                include $init_file;
+                $finished_at = microtime(true);
+                
+                //loga o tempo de execução
+                $sec = $finished_at - $started_at;
+                if($sec  > .1) {
+                    $app->log->debug("Component $component init.php executed in " . ($sec) . " seconds");
+                }
+            }
+        });
+
+        /**
          * Importa um componente
          *
          * @param string $component Nome do(s) componente(s separados por vírgula)
@@ -182,36 +207,19 @@ class Module extends \MapasCulturais\Module {
             /** @var \MapasCulturais\Themes\BaseV2\Theme $this */
 
             $component = trim($component);
+            
+            if(preg_match('#[ ,\n]+#', $component) && ($components = preg_split('#[ ,\n]+#', $component))) {
+                foreach ($components as $component) {
+                    $this->import($component, $data);
+                }
+                return;
+            }
 
             if (!$this->importedComponents) {
                 $this->importedComponents = [];
             }
 
             if (in_array($component, $this->importedComponents)) {
-                return;
-            }
-
-            $init_file = $this->resolveFilename("components/{$component}", 'init.php');
-
-            if ($init_file) {
-                $app->hook('mapas.printJsObject:before', function () use($init_file, $app, $component) {
-                    $started_at = microtime(true);
-                    include $init_file;
-                    $finished_at = microtime(true);
-                    
-                    //loga o tempo de execução
-                    $sec = $finished_at - $started_at;
-                    if($sec  > .1) {
-                        $app->log->debug("Component $component init.php executed in " . ($sec) . " seconds");
-                    }
-                });
-            }
-
-
-            if(preg_match('#[ ,\n]+#', $component) && ($components = preg_split('#[ ,\n]+#', $component))) {
-                foreach ($components as $component) {
-                    $this->import($component, $data);
-                }
                 return;
             }
             $imported_components = $this->importedComponents;
@@ -242,10 +250,12 @@ class Module extends \MapasCulturais\Module {
          */
         $app->hook('Theme::enqueueComponentScript', function ($result, string $component, array $dependences = []) {
             /** @var \MapasCulturais\Themes\BaseV2\Theme $this */
+            $app = App::i();
 
             $texts_filename = $this->resolveFilename("components/{$component}", 'texts.php');
             if($texts_filename && is_file($texts_filename)) {
-                $texts = include $texts_filename;
+                $texts = (array) include $texts_filename;
+                $app->applyHookBoundTo($this, "component({$this->controller->id}.{$this->controller->action}.{$component}).texts", [&$texts]);
                 $this->localizeScript("component:$component", $texts);
             }
             $this->enqueueScript('components', $component, "../components/{$component}/script.js", $dependences);
@@ -297,6 +307,7 @@ class Module extends \MapasCulturais\Module {
 
             $app->applyHookBoundTo($this, "component({$component}):before", [&$__data, &$__template_path]);
             
+            extract($this->data);
             extract($__data);
 
             include $__template_path;

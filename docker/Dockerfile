@@ -1,4 +1,6 @@
-FROM php:8.3-fpm
+ARG COMPOSER_ARGS="--no-dev"
+
+FROM php:8.3.37-fpm
 
 RUN apt-get update
 
@@ -11,10 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN mkdir -p /etc/apt/keyrings
 RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-RUN echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list
+RUN echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list
 RUN apt-get update && apt-get install -y nodejs
+RUN node --version && node -e "const [major, minor, patch] = process.versions.node.split('.').map(Number); if (major !== 22 || minor < 23 || (minor === 23 && patch < 4)) throw new Error('Node.js 22.23.4 or newer in the 22.x release line is required')"
 
-RUN npm install -g pnpm
+RUN npm install -g pnpm@10
 RUN rm -rf /var/lib/apt/lists
 
 ENV PNPM_HOME=/root/.local/share/pnpm
@@ -37,7 +40,7 @@ RUN docker-php-ext-install -j$(nproc) iconv && \
     docker-php-ext-install -j$(nproc) gd
 
 # Install APCu
-RUN no | pecl install apcu \
+RUN echo no | pecl install apcu \
     && echo "extension=apcu.so" > /usr/local/etc/php/conf.d/apcu.ini
 
 # install imagick from git
@@ -76,7 +79,10 @@ COPY composer.lock /var/www/composer.lock
 WORKDIR /var/www/
 
 ENV COMPOSER_ALLOW_SUPERUSER=1 
-RUN composer.phar install
+ARG COMPOSER_ARGS
+
+RUN composer.phar install $COMPOSER_ARGS
+RUN composer.phar dump-autoload --optimize
 
 COPY config /var/www/config
 COPY public /var/www/html
@@ -86,14 +92,14 @@ COPY var /var/www/var
 
 WORKDIR /var/www/src/
 RUN rm -rf node_modules
-RUN pnpm install && pnpm run build
+RUN pnpm install --frozen-lockfile && pnpm run build
 
 RUN sass themes/BaseV1/assets/css/sass/main.scss:themes/BaseV1/assets/css/main.css
 
-RUN chown www-data:www-data -R /var/www
 
 COPY docker/recreate-pending-pcache-cron.sh /recreate-pending-pcache-cron.sh
 COPY docker/jobs-cron.sh /jobs-cron.sh
+COPY docker/cleanup-orphan-assets-cron.sh /cleanup-orphan-assets-cron.sh
 COPY docker/entrypoint.sh /entrypoint.sh
 
 COPY version.txt /var/www/version.txt
@@ -103,6 +109,8 @@ COPY docker/production/php.ini /usr/local/etc/php/php.ini
 COPY docker/timezone.ini /usr/local/etc/php/conf.d/timezone.ini
 
 RUN ln -s /var/www/html /var/www/public
+
+RUN chown -R www-data:www-data /var/www/public/
 
 # arquivos exclusivos dos ambientes de desenvolvimento
 COPY docker/development/router.php /var/www/dev/router.php

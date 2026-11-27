@@ -52,9 +52,15 @@ app.component('user-management--ownership-tabs', {
         newSelect() {
             if(this.type=='registration') {
                 return this.select+',owner.name,number,createTimestamp,opportunity.{files.avatar,name}';
+            } if(this.type=='agent') {
+                return this.select+',parent,userId';
             } else {
                 return this.select;
             }
+        },
+
+        defaultOrder() {
+            return this.type === 'agent' ? 'createTimestamp ASC' : 'updateTimestamp DESC';
         },
 
     },
@@ -65,6 +71,17 @@ app.component('user-management--ownership-tabs', {
             entity.POST('enqueuePCache',{callback: () => {
                 entity.recreatingPCache = false;
             }});
-        }
+        },
+
+        loginAsAgentUrl(entity) {
+            return Utils.createUrl('auth', 'asUserId', {
+                id: entity.userId,
+                agent_id: entity.id,
+            });
+        },
+
+        loginAsAgent(entity) {
+            window.location.href = this.loginAsAgentUrl(entity);
+        },
     }
 });

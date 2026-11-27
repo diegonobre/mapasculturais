@@ -10,12 +10,15 @@ use MapasCulturais\App;
 use MapasCulturais\Exceptions\PermissionDenied;
 use MapasCulturais\EvaluationMethod;
 use MapasCulturais\GuestUser;
+use Respect\Validation\Validator as v;
 
 /**
  * Registration
  * @property Agent $owner The owner of this registration
  * @property Opportunity $opportunity
  * @property string $category
+ * @property string $proponentType
+ * @property string $range
  * 
  * @property-read EvaluationMethodConfiguration $evaluationMethodConfiguration
  * @property-read EvaluationMethod $evaluationMethod
@@ -178,20 +181,20 @@ class Registration extends \MapasCulturais\Entity
     protected $__valuers;
 
     /**
-    * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\RegistrationMeta", mappedBy="owner", cascade={"remove"}, orphanRemoval=true)
+    * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\RegistrationMeta", mappedBy="owner", cascade={"remove"})
     */
     protected $__metadata = [];
 
     /**
      * @var \MapasCulturais\Entities\RegistrationFile[] Files
      *
-     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\RegistrationFile", fetch="EXTRA_LAZY", mappedBy="owner", cascade={"remove"}, orphanRemoval=true)
+     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\RegistrationFile", fetch="EXTRA_LAZY", mappedBy="owner", cascade={"remove"})
      * @ORM\JoinColumn(name="id", referencedColumnName="object_id", onDelete="CASCADE")
     */
     protected $__files;
 
     /**
-     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\RegistrationPermissionCache", mappedBy="owner", cascade={"remove"}, orphanRemoval=true, fetch="EXTRA_LAZY")
+     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\RegistrationPermissionCache", mappedBy="owner", cascade={"remove"}, fetch="EXTRA_LAZY")
      */
     protected $__permissionsCache;
 
@@ -199,7 +202,7 @@ class Registration extends \MapasCulturais\Entity
 
      * @var \MapasCulturais\Entities\RegistrationAgentRelation[] Agent Relations
      *
-     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\RegistrationAgentRelation", mappedBy="owner", cascade={"remove"}, orphanRemoval=true)
+     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\RegistrationAgentRelation", mappedBy="owner", cascade={"remove"})
      * @ORM\JoinColumn(name="id", referencedColumnName="object_id", onDelete="CASCADE")
     */
     protected $__agentRelations;
@@ -207,7 +210,7 @@ class Registration extends \MapasCulturais\Entity
     /**
      * @var \MapasCulturais\Entities\RegistrationSpaceRelation[] Space Relations
      *
-     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\RegistrationSpaceRelation", mappedBy="owner", cascade={"remove"}, orphanRemoval=true)
+     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\RegistrationSpaceRelation", mappedBy="owner", cascade={"remove"})
      * @ORM\JoinColumn(name="id", referencedColumnName="object_id", onDelete="CASCADE")
     */
     protected $__spaceRelation;
@@ -270,6 +273,27 @@ class Registration extends \MapasCulturais\Entity
      * @ORM\Column(name="update_timestamp", type="datetime", nullable=true)
      */
     protected $updateTimestamp;
+
+    /**
+     * Status da isenção automática por selos nesta fase.
+     *
+     * Valores possíveis: 'granted' (isenção concedida), 'agent_missing' (sem
+     * agente proponente identificável) ou NULL (avaliação normal / não isenta).
+     *
+     * @var string|null
+     *
+     * @ORM\Column(name="seal_exemption_status", type="string", length=20, nullable=true)
+     */
+    protected $sealExemptionStatus;
+
+    /**
+     * Momento em que a verificação de isenção por selos foi processada.
+     *
+     * @var \DateTime|null
+     *
+     * @ORM\Column(name="seal_exemption_timestamp", type="datetime", nullable=true)
+     */
+    protected $sealExemptionTimestamp;
 
 
     public $preview = false;
@@ -433,6 +457,7 @@ class Registration extends \MapasCulturais\Entity
             'editableUntil' => $this->editableUntil,
             'editableFields' => $this->editableFields,
             'editSentTimestamp' => $this->editSentTimestamp,
+            'status' => $this->status,
         ];
 
         if($this->opportunity->canUser('@control')) {
@@ -518,7 +543,7 @@ class Registration extends \MapasCulturais\Entity
         }
 
         $avaliableEvaluationFields = ($this->opportunity->avaliableEvaluationFields != "null") ? $this->opportunity->avaliableEvaluationFields : [];
-        if(in_array($key, array_keys($avaliableEvaluationFields))){
+        if($avaliableEvaluationFields && isset($avaliableEvaluationFields[$key]) && ($avaliableEvaluationFields[$key] === true || $avaliableEvaluationFields[$key] === 'true')){
             return true;
         }
 
@@ -569,10 +594,15 @@ class Registration extends \MapasCulturais\Entity
     function sendEditableFields() {
         $app = App::i();
         $this->checkPermission('sendEditableFields');
+
+        $app->applyHookBoundTo($this, "entity({$this->getHookClassPath()}).sendEditableFields:before");
+
         $this->editSentTimestamp = new DateTime();
         $app->disableAccessControl();
         $this->save(true);
         $app->enableAccessControl();
+
+        $app->applyHookBoundTo($this, "entity({$this->getHookClassPath()}).sendEditableFields:after");
     }
 
     function setOwnerId($id){
@@ -838,6 +868,153 @@ class Registration extends \MapasCulturais\Entity
         return (array) $exceptions->exclude;
     }
 
+    /**
+     * Retorna a lista dos campos verificados e os selos que verificam cada campo
+     *
+     *  @return object Um objeto contendo os selos bloqueados de cada campo.
+     */
+    function getLockedFieldSeals() {
+        $owner_locked_field_seals = (array) $this->owner->lockedFieldSeals;
+
+        $related_agents = $this->relatedAgents ?: [];
+        $collective_locked_field_seals = [];
+        
+        if(isset($related_agents['coletivo'])) {
+            $collective_locked_field_seals = (array) $related_agents['coletivo'][0]->lockedFieldSeals;
+        }
+
+        $locked_field_seals = [];
+
+        $fields = $this->opportunity->registrationFieldConfigurations;
+
+        foreach($fields as $field) {
+            if($field->fieldType == 'agent-owner-field') {
+                $field_seals = $this->getAgentFieldSealDataForRegistrationField($owner_locked_field_seals, $field->config['entityField'] ?? null);
+                if($field_seals) {
+                    $locked_field_seals[$field->fieldName] = $field_seals;
+                }
+            }
+
+            if($field->fieldType == 'agent-collective-field') {
+                $field_seals = $this->getAgentFieldSealDataForRegistrationField($collective_locked_field_seals, $field->config['entityField'] ?? null);
+                if($field_seals) {
+                    $locked_field_seals[$field->fieldName] = $field_seals;
+                }
+            }
+        }
+        
+        return (object) $locked_field_seals;
+    }
+
+    /**
+     * Retorna os selos dos campos da inscrição com o status granular de cada campo.
+     *
+     * Diferente de lockedFieldSeals, este método inclui também campos prestes a
+     * expirar e expirados para exibição visual, sem implicar bloqueio.
+     *
+     * @return object
+     */
+    function getFieldSealStatuses() {
+        $owner_field_seal_statuses = (array) $this->owner->fieldSealStatuses;
+
+        $related_agents = $this->relatedAgents ?: [];
+        $collective_field_seal_statuses = [];
+
+        if(isset($related_agents['coletivo'])) {
+            $collective_field_seal_statuses = (array) $related_agents['coletivo'][0]->fieldSealStatuses;
+        }
+
+        $field_seal_statuses = [];
+        $fields = $this->opportunity->registrationFieldConfigurations;
+
+        foreach($fields as $field) {
+            if($field->fieldType == 'agent-owner-field') {
+                $field_statuses = $this->getAgentFieldSealDataForRegistrationField($owner_field_seal_statuses, $field->config['entityField'] ?? null);
+                if($field_statuses) {
+                    $field_seal_statuses[$field->fieldName] = $field_statuses;
+                }
+            }
+
+            if($field->fieldType == 'agent-collective-field') {
+                $field_statuses = $this->getAgentFieldSealDataForRegistrationField($collective_field_seal_statuses, $field->config['entityField'] ?? null);
+                if($field_statuses) {
+                    $field_seal_statuses[$field->fieldName] = $field_statuses;
+                }
+            }
+        }
+
+        return (object) $field_seal_statuses;
+    }
+
+    /**
+     * Resolve selos/status de um campo de agente para o campo equivalente na
+     * inscrição. O mapeamento é estrito: `name` e `nomeCompleto` são campos
+     * diferentes e não devem ser tratados como equivalentes.
+     *
+     * @param array $agent_field_seal_data
+     * @param string|null $entity_field
+     * @return array
+     */
+    protected function getAgentFieldSealDataForRegistrationField(array $agent_field_seal_data, ?string $entity_field): array
+    {
+        if(!$entity_field) {
+            return [];
+        }
+
+        return isset($agent_field_seal_data[$entity_field]) ? (array) $agent_field_seal_data[$entity_field] : [];
+    }
+
+    /**
+     * Retorna a lista dos campos bloqueados.
+     *
+     * @return array Um array contendo os nomes dos campos bloqueados.
+     */
+    function getLockedFields() {
+        $locked_field_seals = (array) $this->lockedFieldSeals;
+
+        $locked_fields = [];
+        if (!empty($locked_field_seals)) {
+            $locked_fields = array_keys($locked_field_seals);
+        }
+
+        return $locked_fields;
+    }
+
+    /**
+     * Obtém as relações de selos do proprietário e dos agentes relacionados.
+     *
+     * @return array Retorna um array contendo todos os selos do proprietário e do coletivo.
+     */
+    function getAgentSealRelations() {
+        $app = App::i();
+        
+        $seals = [];
+        $owner_seals = $this->owner->sealRelations;
+        $related_agents = $this->relatedAgents ?: [];
+        $collective_seals = isset($related_agents['coletivo']) ? $related_agents['coletivo'][0]->sealRelations : [];
+
+        $all_seals = array_merge($owner_seals, $collective_seals);
+
+        if (empty($all_seals)) {
+            return [];
+        }
+        
+        foreach ($all_seals as $relation) {
+            $seals[] = [
+                '__objectType' => 'seal', // Added for compatibility with <mc-avatar>
+                'sealRelationId' => $relation->id,
+                'sealId' => $relation->seal->id,
+                'name' => $relation->seal->name,
+                'files' => $relation->seal->files ?? null,
+                'singleUrl' => $app->createUrl('seal', 'sealRelation', [$relation->id]),
+                'createTimestamp' => $relation->createTimestamp,
+                'isVerificationSeal' => in_array($relation->seal->id, $app->config['app.verifiedSealsIds']),
+            ];
+        }
+    
+        return $seals;
+    }
+
     /** 
      * Retorna os avaliadores da inscrição agrupados pelos comitês
      * 
@@ -1100,11 +1277,6 @@ class Registration extends \MapasCulturais\Entity
 
         // copies agents data including configured private
 
-        // creates zip archive of all files
-        if($this->files){
-            $app->storage->createZipOfEntityFiles($this, $fileName = $this->number . ' - ' . uniqid() . '.zip');
-        }
-
         $this->status = self::STATUS_SENT;
         if($update_sent_timestamp){
             $this->sentTimestamp = new \DateTime;
@@ -1121,31 +1293,6 @@ class Registration extends \MapasCulturais\Entity
 
     }
 
-    function cleanMaskedRegistrationFields(){
-        $app = App::i();
-        $fieldsValues = $this->getMetadata();
-
-        $fieldsConfigurations = $this->opportunity->registrationFieldConfigurations;
-
-        $app->disableAccessControl();
-        foreach ($fieldsValues as $fieldName => $value){
-
-            foreach ($fieldsConfigurations as $fieldConf){
-
-                if('field_'.$fieldConf->id  === $fieldName){
-                    switch ($fieldConf->getFieldTypeDefinition()->slug){
-                        case 'cpf':
-                        case 'cnpj':
-                            $value = preg_replace( '/[^0-9]/', '', (string) $value );
-                            $this->setMetadata($fieldName, $value);
-                            break;
-                    }
-                }
-            }
-        }
-        $app->enableAccessControl();
-    }
-
     /**
      * Verifica se uma etapa deve ser exibida com base nas categorias, 
      * faixas e tipos de proponente definidos na configuração do etapa.
@@ -1154,7 +1301,8 @@ class Registration extends \MapasCulturais\Entity
      * @return bool Verdadeiro se a etapa deve ser exibida, falso caso contrário.
      */
     function isStepVisible(RegistrationStep $step): bool {
-        $conditional = $step->metadata['conditional'] ?? null;
+        $metadata = (array) $step->metadata;
+        $conditional = $metadata['conditional'] ?? null;
 
         if (!$conditional) {
             return true;
@@ -1188,7 +1336,8 @@ class Registration extends \MapasCulturais\Entity
      * @param RegistrationFieldConfiguration|RegistrationFileConfiguration $field O campo a ser verificado.
      * @return bool Verdadeiro se o campo deve ser exibido, falso caso contrário.
      */
-    function isFieldVisisble(RegistrationFieldConfiguration|RegistrationFileConfiguration $field): bool {
+    function isFieldVisisble(RegistrationFieldConfiguration|RegistrationFileConfiguration $field): bool
+    {
         $opportunity = $this->opportunity;
 
         $use_category = (bool) $opportunity->registrationCategories;
@@ -1198,7 +1347,6 @@ class Registration extends \MapasCulturais\Entity
         $field_categories = $field->categories ?: [];
         $field_ranges = $field->registrationRanges ?: [];
         $field_proponent_types = $field->proponentTypes ?: [];
-
 
         if ($use_category && count($field_categories) > 0 && !in_array($this->category, $field_categories)) {
             return false;
@@ -1216,20 +1364,67 @@ class Registration extends \MapasCulturais\Entity
             return false;
         }
 
-        if($field->conditional){
-            $_fied_name = $field->conditionalField;
-            $_fied_value = $field->conditionalValue;
-            if (is_array($this->$_fied_name)) {
-                return in_array($_fied_value, $this->$_fied_name);
-            } else {
-                return $this->$_fied_name == $_fied_value;
-            }
+        if(!$field->conditional || !$field->conditionalField) {
+            return true;
         }
 
-        return true;
+        $_fied_name = $field->conditionalField;
+        $_fied_value = $field->conditionalValue;
+        
+
+        // Busca o campo pai (pode estar na lista de campos ou de arquivos)
+        $parentField = $this->findParentField($_fied_name);
+
+        // Se o pai existe e não está visível, este também não está
+        if ($parentField && !$this->isFieldVisisble($parentField)) {
+            return false;
+        }
+
+        // Se o pai estiver visível, checa o valor esperado
+        if ($_fied_name === 'appliedForQuota') {
+            return $opportunity->enableQuotasQuestion && $this->appliedForQuota;
+        }
+
+        if (is_array($this->$_fied_name)) {
+            return in_array($_fied_value, $this->$_fied_name);
+        }
+
+        return $this->$_fied_name == $_fied_value;
+    }
+
+    /**
+     * Localiza e retorna a configuração de campo ou arquivo correspondente ao nome informado.
+     * 
+     * Pode ser utilizada para identificar o campo pai de um campo condicional,
+     * permitindo a verificação recursiva de dependências em cascata.
+     *
+     * @param string $fieldName Nome do campo ou grupo de arquivos a ser localizado.
+     *
+     * @return RegistrationFieldConfiguration|RegistrationFileConfiguration|null
+     *         Retorna a configuração correspondente ou null caso não seja encontrada.
+     */
+    private function findParentField(string $fieldName): RegistrationFieldConfiguration|RegistrationFileConfiguration|null
+    {
+        // Procura entre os campos normais
+        foreach ($this->opportunity->registrationFieldConfigurations as $f) {
+            if ($f->fieldName === $fieldName) {
+                return $f;
+            }
+        }
+        // Procura entre os arquivos
+        foreach ($this->opportunity->registrationFileConfigurations as $f) {
+            if ($f->fileGroupName === $fieldName || $f->fieldName === $fieldName) {
+                return $f;
+            }
+        }
+        return null;
     }
 
     function getValidationErrors() {
+        if($previous_phase_opportunity = $this->opportunity->previousPhase){
+            $previous_phase_opportunity->unregisterRegistrationMetadata(include_previous_phases:true);
+        }
+
         if($this->isNew()) {
             $errors = parent::getValidationErrors();
         } else {
@@ -1270,6 +1465,9 @@ class Registration extends \MapasCulturais\Entity
             $errorsResult['avatar'] = [sprintf(\MapasCulturais\i::__('A imagem avatar do agente "%s" é obrigatório.'),$this->owner->name)];
         }
 
+        $proponent_agent_relation = $this->opportunity->proponentAgentRelation ?? null;
+        $proponent_agent_relation_avatar = $this->opportunity->proponentAgentRelationAvatar ?? null;
+
         $definitionsWithAgents = $this->_getDefinitionsWithAgents();
         
         // validate agents
@@ -1304,6 +1502,17 @@ class Registration extends \MapasCulturais\Entity
             }
 
             if($def->agent){
+                $requires_avatar = false;
+                if ($proponent_agent_relation && $proponent_agent_relation_avatar) {
+                    $requires_avatar = ($proponent_agent_relation->{$this->proponentType} ?? false)
+                        && ($proponent_agent_relation_avatar->{$this->proponentType} ?? false);
+                }
+
+                if ($group_name === 'coletivo' && $requires_avatar && !array_key_exists('avatar', $def->agent->files)) {
+                    $errorsResult[$agent_prefix . $def->agentRelationGroupName . '_avatar'] = [
+                        sprintf(i::__('A imagem avatar do agente "%s" é obrigatório.'), $def->agent->name)
+                    ];
+                }
 
                 if($def->relationStatus < 0){
                     $errors[] = sprintf(i::__('O agente %s ainda não confirmou sua participação neste projeto.'), $def->agent->name);
@@ -1349,21 +1558,6 @@ class Registration extends \MapasCulturais\Entity
             }
 
             $field_required = $rfc->required;
-            
-            /** @todo Verificar se este if ainda é necessário após a implementação do isFieldVisisble()*/
-            if($rfc->conditional){
-                $_fied_name = $rfc->conditionalField;
-                $_fied_value = $rfc->conditionalValue;
-                if ($rfc->required) {
-                    if (is_array($this->$_fied_name) && in_array($_fied_value, $this->$_fied_name)) {
-                        $field_required = true;
-                    } else {
-                        $field_required = $this->$_fied_name == $_fied_value;
-                    }
-                } else {
-                    $field_required = false;
-                }
-            }
 
             $errors = [];
             if($field_required){
@@ -1389,26 +1583,8 @@ class Registration extends \MapasCulturais\Entity
 
             $field_name = $field_prefix . $field->id;
             $field_required = $field->required;
-            
-            /** @todo Verificar se este if ainda é necessário após a implementação do isFieldVisisble()*/
-            if($metadata_definition && $metadata_definition->config && $metadata_definition->config['registrationFieldConfiguration'] && $metadata_definition->config['registrationFieldConfiguration']->conditional){
-                $conf =  $metadata_definition->config['registrationFieldConfiguration'];
-              
-                $_fied_name = $conf->conditionalField;
-                $_fied_value = $conf->conditionalValue;
-                if ($field->required) {
-                    if (is_array($this->$_fied_name) && in_array($_fied_value, $this->$_fied_name)) {
-                        $field_required = true;
-                    } else {
-                        $field_required = $this->$_fied_name == $_fied_value;
-                    }
-                } else {
-                    $field_required = false;
-                }
-            }
 
             $errors = [];
-
             $prop_name = $field->getFieldName();
             $val = $this->$prop_name;
 
@@ -1448,6 +1624,7 @@ class Registration extends \MapasCulturais\Entity
                         }
                     }
                 }
+
             }
 
             if ($errors) {
@@ -1577,7 +1754,7 @@ class Registration extends \MapasCulturais\Entity
             return false;
         }
 
-        if(!in_array($this->opportunity->status, [-1,1]) && !$this->opportunity->canUser('@control', $user)){
+        if(!in_array($this->opportunity->status, [-1,1,-20]) && !$this->opportunity->canUser('@control', $user)){
             return false;
         }
 
@@ -1673,11 +1850,15 @@ class Registration extends \MapasCulturais\Entity
             return false;
         }
 
+        if($this->status != self::STATUS_DRAFT) {
+            return false;
+        }
+
         if($this->opportunity->canUser('@control', $user)){
             return true;
         }
 
-        if(!in_array($this->opportunity->status, [-1,1]) && !$this->opportunity->canUser('@control', $user)){
+        if(!in_array($this->opportunity->status, [-1,1,-20]) && !$this->opportunity->canUser('@control', $user)){
             return false;
         }
 
@@ -1687,15 +1868,9 @@ class Registration extends \MapasCulturais\Entity
         }
 
         if(!$this->opportunity->isRegistrationOpen()){
-            return $this->canUser('@control') && 
-                    $this->sentTimestamp && 
-                    $this->opportunity->publishedRegistrations;
-        }
-
-        if($this->getSendValidationErrors()){
             return false;
         }
-
+       
         if($this->isUserAdmin($user)){
             return true;
         }
@@ -1704,6 +1879,10 @@ class Registration extends \MapasCulturais\Entity
     }
 
     protected function canUserSendEditableFields(User | GuestUser $user):bool {
+        if($this->status == self::STATUS_DRAFT) {
+            return false;
+        }
+
         if (!$this->canUser('@control')) {
             return false;
         }
@@ -1719,9 +1898,15 @@ class Registration extends \MapasCulturais\Entity
         if($this->status !== self::STATUS_DRAFT){
             return false;
         }else{
-            if((new \DateTime() >= $this->opportunity->registrationFrom) && $this->genericPermissionVerification($user)){
+
+            if(!$this->opportunity->isRegistrationOpen() && !$this->opportunity->canUser('@control')) {
+                return false;
+            }
+
+            if($this->genericPermissionVerification($user)){
                 return true;
             }
+            
             return false;
         }
     }
@@ -1740,6 +1925,11 @@ class Registration extends \MapasCulturais\Entity
         if($user->is('guest')){
             return false;
         }
+
+        // Proponente nunca avalia a própria inscrição (mesmo se estiver em valuers)
+        if($this->owner->user->equals($user)){
+            return false;
+        }
         
         $evaluation_method_configuration = $this->getEvaluationMethodConfiguration();
         
@@ -1747,47 +1937,37 @@ class Registration extends \MapasCulturais\Entity
             return false;
         }
 
-        $valuers = $evaluation_method_configuration->getAgentRelations();
-        
-        $is_valuer = false;
-        
-        foreach ($valuers as $agent_relation) {
-            if ($agent_relation->status != EvaluationMethodConfigurationAgentRelation::STATUS_ENABLED) {
-                continue;
-            }
+        $is_valuer = isset($this->valuers[$user->id]);
 
-            $agent = $agent_relation->agent;
-            if($agent->user->id == $user->id ){
-                $is_valuer = true;
-            }
-        }
-        
         if(!$is_valuer){
             return false;
         }
         
-        return $this->canUserViewUserEvaluation($user, true);
+        $result = $this->canUserViewUserEvaluation($user, true);
+
+        return $result;
     }
 
     protected function canUserEvaluate($user){
-        if (!$this->opportunity->evaluationMethodConfiguration) {
+        $emc = $this->opportunity->evaluationMethodConfiguration;
+        
+        if (!$emc) {
             return false;
         }
         
-        if(new DateTime('now') < $this->opportunity->evaluationMethodConfiguration->evaluationFrom || new DateTime('now') > $this->opportunity->evaluationMethodConfiguration->evaluationTo){
+        if(new DateTime('now') < $emc->evaluationFrom || new DateTime('now') > $emc->evaluationTo){
             return false;
         }
 
         $can = $this->canUserEvaluateOnTime($user);
 
         $evaluation = $this->getUserEvaluation($user);
-
+        
         $evaluation_sent = false;
 
         if($evaluation){
             $evaluation_sent = $evaluation->status === RegistrationEvaluation::STATUS_SENT;
         }
-
         return $can && !$evaluation_sent;
     }
 
@@ -1858,11 +2038,25 @@ class Registration extends \MapasCulturais\Entity
     }
     
     function getExtraEntitiesToRecreatePermissionCache(): array {
-        if ($previous_phase = $this->previousPhase) {
-            return [$previous_phase];
-        } else {
+        if(!$this->id) {
             return [];
         }
+
+        $result = [];
+
+        if ($previous_phase = $this->previousPhase) {
+            $result[]= $previous_phase;
+        }
+
+        if($this->opportunity->isAppealPhase) {
+            $parent_registration = $this->repo()->findOneBy([
+                'number' => $this->number,
+                'opportunity' => $this->opportunity->parent
+            ]);
+            $result[] = $parent_registration;
+        }
+
+        return $result;
     }
 
     function getExtraPermissionCacheUsers(){
@@ -1907,7 +2101,7 @@ class Registration extends \MapasCulturais\Entity
      * @return EvaluationMethodConfiguration
      */
     public function getEvaluationMethodConfiguration() {
-        return $this->opportunity->evaluationMethodConfiguration;
+        return $this->opportunity ? $this->opportunity->evaluationMethodConfiguration : null;
     }
 
     /**
@@ -1954,11 +2148,38 @@ class Registration extends \MapasCulturais\Entity
         $evaluation->save(true);
     }
 
+    /**
+     * Garante que só avaliador atribuído (valuers) salve avaliação, e nunca o proponente.
+     * Legado: gestor com @control na oportunidade pode editar avaliação já existente de outro avaliador.
+     *
+     * @throws PermissionDenied
+     */
+    protected function assertCanSaveUserEvaluation(User $user): void {
+        $app = App::i();
+
+        if($this->owner->user->equals($user)){
+            throw new PermissionDenied($app->user, $this, 'evaluate');
+        }
+
+        if($this->canUser('evaluate', $user)){
+            return;
+        }
+
+        $existing = $this->getUserEvaluation($user);
+        if($existing && $this->opportunity->canUser('@control', $app->user)){
+            return;
+        }
+
+        throw new PermissionDenied($app->user, $this, 'evaluate');
+    }
+
     function saveUserEvaluation(array $data, User $user = null, $evaluation_status = null){
         $app = App::i();
         if(is_null($user)){
             $user = $app->user;
         }
+
+        $this->assertCanSaveUserEvaluation($user);
 
         $lockname = "save-user-evauation--{$this->id}--{$user->id}";
 

@@ -6,6 +6,7 @@ $this->import('
     complaint-suggestion
     entity-actions
     entity-admins
+    entity-data 
     entity-files-list
     entity-gallery
     entity-gallery-video
@@ -21,6 +22,7 @@ $this->import('
     mc-breadcrumb
     mc-container
     mc-share-links
+    search-list-event
     space-info
     mc-tab
     mc-tabs
@@ -39,8 +41,7 @@ $this->breadcrumb = [
     <entity-header :entity="entity">
         <template #metadata>
             <dl v-if="entity.id && global.showIds[entity.__objectType]" class="metadata__id">
-                <dt class="metadata__id--id"><?= i::__('ID') ?></dt>
-                    <dd><strong>{{entity.id}}</strong></dd>
+                <entity-data class="metadata__id" :entity="entity" prop="id" label="<?php i::_e("ID:")?>"></entity-data>
             </dl> 
             <dl v-if="entity.type">
                 <dt><?= i::__('Tipo') ?></dt>
@@ -97,6 +98,21 @@ $this->breadcrumb = [
                 </mc-container>
             </div>
         </mc-tab>
+        <?php if($entity->eventOccurrences && $entity->eventOccurrences->count()): ?>
+        <mc-tab icon="event" label="<?= i::_e('Eventos') ?>" slug="eventos">
+            <div class="search__tabs--list">
+                <search-list-event 
+                    :pseudo-query='<?= json_encode([
+                        "space:id" => $entity->id,
+                        "@from" => date("Y-m-d"),
+                        "@to" => date("Y") . "-12-31"
+                    ]) ?>'
+                    select="id,name,subTitle,files.avatar,seals,terms,classificacaoEtaria,singleUrl"
+                    space-select="id,name,endereco,files.avatar,singleUrl"
+                />
+            </div>
+        </mc-tab>
+        <?php endif; ?>
         <?php $this->applyTemplateHook('tabs','end') ?>
     </mc-tabs>
     <entity-actions :entity="entity"></entity-actions>

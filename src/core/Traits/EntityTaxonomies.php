@@ -1,6 +1,8 @@
 <?php
 namespace MapasCulturais\Traits;
 use MapasCulturais\App;
+use MapasCulturais\Entities\Term;
+use MapasCulturais\Entities\TermRelation;
 
 /**
  * Defines that the entity has taxonomies.
@@ -98,7 +100,7 @@ trait EntityTaxonomies{
         }
 
         foreach($taxonomies as $slug) {
-            if (in_array("terms:{$slug}", $this->lockedFields)) {
+            if ($this->isFieldLocked("terms:{$slug}")) {
                 if(is_null($this->terms)){
                     $this->populateTermsProperty();
                 }
@@ -148,7 +150,7 @@ trait EntityTaxonomies{
      * This method creates or removes the associations with te terms as needed.
      *
      */
-    function saveTerms(){
+    function saveTerms(bool $flush = true){
         if(!$this->terms)
             return false;
 
@@ -166,9 +168,10 @@ trait EntityTaxonomies{
 
                 // if a term with an existent relation is not in the terms property, removes the relation.
                 }else{
+                    /** @var TermRelation */
                     $tr = $app->repo($this->getTermRelationClassName())->findOneBy(['term' => $term, 'owner' => $this]);
                     if($tr)
-                        $tr->delete(true);
+                        $tr->delete($flush);
                 }
             }
         }
@@ -176,7 +179,7 @@ trait EntityTaxonomies{
         // now creates relations to the terms in the temporary array
         foreach($taxonomy as $slug => $terms){
             foreach($terms as $term){
-                $this->addTerm($slug, $term);
+                $this->addTerm($slug, $term, flush: $flush);
             }
         }
     }
@@ -190,7 +193,7 @@ trait EntityTaxonomies{
      *
      * @return bool true if the term was added to the entity, false if not.
      */
-    protected function addTerm($taxonomy_slug, $term, $description = ''){
+    protected function addTerm($taxonomy_slug, $term, $description = '', bool $flush = true){
         $app = App::i();
 
         $term = trim($term);
@@ -205,7 +208,10 @@ trait EntityTaxonomies{
                 $term = $definition->restrictedTerms[mb_strtolower(trim($term))];
             }
 
+            /** @var Term */
             $t = $app->repo('Term')->findOneBy(['taxonomy' => $definition->slug, 'term' => $term]);
+
+            /** @var TermRelation */
             $tr = $app->repo($this->getTermRelationClassName())->findOneBy(['term' => $t, 'owner' => $this]);
 
             // if the term is already associated to this entity return
@@ -214,11 +220,12 @@ trait EntityTaxonomies{
 
             // else if the term exists, create de association
             }elseif($t){
+                /** @var TermRelation */
                 $tr = new $term_relation_class;
                 $tr->term = $t;
                 $tr->owner = $this;
 
-                $tr->save();
+                $tr->save($flush);
                 return true;
 
             // else if the term does not exists but the taxonomy definition allow insertion, create de term and the association
@@ -229,13 +236,25 @@ trait EntityTaxonomies{
                 $t->taxonomy = $definition->slug;
                 $t->description = $description;
 
-                $t->save();
+                try {
+                    $t->save($flush);
+                } catch (\Exception $e) {
+                    // Se o termo já foi criado por outro processo (deadlock/constraint unique),
+                    // busca o termo existente e continua
+                    $existing_term = $app->repo('Term')->findOneBy(['taxonomy' => $definition->slug, 'term' => $term]);
+                    if ($existing_term) {
+                        $t = $existing_term;
+                    } else {
+                        throw $e;
+                    }
+                }
 
+                /** @var TermRelation */
                 $tr = new $term_relation_class;
                 $tr->term = $t;
                 $tr->owner = $this;
 
-                $tr->save();
+                $tr->save($flush);
                 return true;
 
             // else if the term not exists and the taxonomy definition not allow insertion, return false

@@ -1,6 +1,6 @@
 app.component('entity-file', {
     template: $TEMPLATES['entity-file'],
-    emits: ['uploaded', 'setFile'],
+    emits: ['delete', 'setFile', 'uploaded'],
 
     setup(props, {slots}) {
         // os textos estão localizados no arquivo texts.php deste componente 
@@ -61,15 +61,32 @@ app.component('entity-file', {
             type: Boolean,
             default: false,
         },
+        showEmpty: {
+            type: Boolean,
+            default: false,
+        },
         defaultFile: {
             type: Object,
             required: false
+        },
+        beforeUpload: {
+            type: Function,
+            required: false
+        },
+        uploadOnSubmit: {
+            type: Boolean,
+            default: true,
         },
         buttonTextValue: {
             type: String,
             required: false,
             default: 'Enviar'
-        }
+        },
+        allowedFileTypes: {
+            type: Array,
+            required: false,
+            default: () => []
+        },
     },
 
     data() {
@@ -82,9 +99,65 @@ app.component('entity-file', {
         }
     },
 
+    computed: {
+        acceptAttribute() {
+            if (this.allowedFileTypes && this.allowedFileTypes.length > 0) {
+                return this.allowedFileTypes.join(',');
+            }
+            return null;
+        },
+        allowedFileTypesLabel() {
+            if (!this.allowedFileTypes || this.allowedFileTypes.length === 0) {
+                return '';
+            }
+            
+            const mimeToExtension = {
+                'application/pdf': 'PDF',
+                'image/jpeg': 'JPEG',
+                'image/png': 'PNG',
+                'image/gif': 'GIF',
+                'application/msword': 'DOC',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'DOCX',
+                'application/vnd.oasis.opendocument.text': 'ODT',
+                'application/vnd.ms-excel': 'XLS',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'XLSX',
+                'application/vnd.oasis.opendocument.spreadsheet': 'ODS',
+                'text/csv': 'CSV',
+                'application/vnd.ms-powerpoint': 'PPT',
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PPTX',
+                'application/vnd.oasis.opendocument.presentation': 'ODP',
+                'application/zip': 'ZIP',
+                'application/x-rar-compressed': 'RAR',
+                'video/mp4': 'MP4',
+                'video/x-msvideo': 'AVI',
+                'video/quicktime': 'MOV',
+                'audio/mpeg': 'MP3',
+                'audio/wav': 'WAV',
+                'text/plain': 'TXT'
+            };
+            
+            const extensions = this.allowedFileTypes.map(mime => 
+                mimeToExtension[mime] || mime
+            );
+            
+            return extensions.join(', ');
+        }
+    },
+
+    updated() {
+        if (this.uploadOnSubmit) {
+            this.file = this.entity.files?.[this.groupName] || null;
+        }
+    },
+
     methods: {
         setFile(event) {
             this.newFile = event.target.files[0];
+
+            if (!this.uploadOnSubmit && this.newFile) {
+                this.file = this.newFile;
+            }
+
             this.$emit('setFile', this.newFile);
         },
 
@@ -96,33 +169,50 @@ app.component('entity-file', {
                 group: this.groupName,
             };
 
-            this.entity.disableMessages();
-            try{
+            if (this.beforeUpload) {
+                await this.beforeUpload({
+                    data,
+                    file: this.newFile
+                });
+            }
 
+            try{
                 const response = await this.entity.upload(this.newFile, data);
-                this.$emit('uploaded', this);
                 this.file = response;
-                this.loading = false;
-                this.entity.enableMessages();
-                modal.close()
+                this.$emit('uploaded', this);
+
+                this.file = null;
+                this.newFile = {};
+
+                if (modal) {
+                    modal.close();
+                }
 
             } catch(e) {
-                this.loading = false;
-                if(e.error) {
-                    const messages = useMessages();
-                    messages.error(e.data[this.groupName]);
-                } else {
+                if(!e.error) {
                     console.error(e);
                 }
+            } finally {
+                this.loading = false;
             }
 
             return true;
         },
 
-        deleteFile(file) {
-            file.delete().then(() => {
-                this.file = null;
-            });
+        async submit(modal) {
+            if (this.uploadOnSubmit) {
+                await this.upload(modal);
+            } else {
+                modal.close();
+            }
+        },
+
+        async deleteFile(file) {
+            await file.delete();
+            this.file = null;
+            this.newFile = {};
+
+            this.$emit('delete', file);
         }
     },
 });

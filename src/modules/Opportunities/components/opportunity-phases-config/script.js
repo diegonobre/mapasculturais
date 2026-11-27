@@ -38,29 +38,77 @@ app.component('opportunity-phases-config', {
     },
 
     computed: {
+        finalReportingPhase() {
+            return this.phases.find((phase) => phase.isFinalReportingPhase);
+        },
+
         firstPhase() {
             return this.phases[0];
         },
 
         lastPhase() {
-            const lastPhase = this.phases[this.phases.length - 1];
-            if (lastPhase.isLastPhase) {
-                return lastPhase;
-            }
-        }
+            return this.phases.findLast((phase) => phase.isLastPhase);
+        },
+
+        lastPhaseIndex() {
+            return this.phases.findLastIndex((phase) => phase.isLastPhase);
+        },
+
+        hasExecutionPhase() {
+            return this.phases.some(p => p.isExecutionPhase);
+        },
     },
     
     methods: {
-        addInPhases (phase) {
-            this.phases.splice(this.phases.length - 1, 0, phase);
+        async refreshPhasePermissions(phase) {
+            if (!phase?.id) {
+                return;
+            }
+
+            try {
+                if (phase.__objectType === 'evaluationmethodconfiguration') {
+                    const api = new OpportunitiesAPI();
+                    const phases = await api.getPhases(this.entity.id);
+                    const refreshed = phases.find((item) => {
+                        return item.__objectType === phase.__objectType && item.id === phase.id;
+                    });
+
+                    if (refreshed?.currentUserPermissions) {
+                        phase.currentUserPermissions = refreshed.currentUserPermissions;
+                    }
+                } else {
+                    const refreshedPhase = await phase.API.findOne(phase.id, 'currentUserPermissions');
+                    phase.currentUserPermissions = refreshedPhase.currentUserPermissions;
+                }
+            } catch (error) {
+                console.error('Erro ao atualizar permissões da fase:', error);
+            }
         },
+
+        async addInPhases (phase) {
+            this.phases.splice(this.lastPhaseIndex, 0, phase);
+            await this.refreshPhasePermissions(phase);
+        },
+
+        async addReportingPhases (event) {
+            const { collectionPhase, evaluationPhase } = event;
+            this.phases.splice(this.phases.length, 0, collectionPhase, evaluationPhase);
+
+            await this.refreshPhasePermissions(collectionPhase);
+            await this.refreshPhasePermissions(evaluationPhase);
+        },
+
+        addExecutionPhases ({ collectionPhase, evaluationPhase }) {
+            this.phases.splice(this.lastPhaseIndex + 1, 0, collectionPhase, evaluationPhase);
+        },
+
         showPublishTimestamp(phase) {
             const previousPhase = this.getPreviousPhase(phase);
             const nextPhase = this.getNextPhase(phase);
 
             if (phase.isLastPhase) {
                 return true;
-            } else if (phase.__objectType == 'opportunity' && nextPhase.__objectType != 'evaluationmethodconfiguration' && phase.publishTimestamp) {
+            } else if (phase.__objectType == 'opportunity' && nextPhase?.__objectType != 'evaluationmethodconfiguration' && phase.publishTimestamp) {
                 return true;
             } else if (phase.__objectType == 'evaluationmethodconfiguration' && previousPhase.__objectType == 'opportunity' && previousPhase.publishTimestamp) {
                 return true;
@@ -68,7 +116,13 @@ app.component('opportunity-phases-config', {
                 return false;
             }
         },
+
         publishTimestamp(phase) {
+            const _phase = phase.__objectType == "evaluationmethodconfiguration" ? phase.opportunity : phase;
+            if(!_phase.publishTimestamp) {
+                return null;
+            }
+
             if (phase.__objectType == 'opportunity') {
                 return phase.publishTimestamp;
             } 
@@ -90,7 +144,7 @@ app.component('opportunity-phases-config', {
 
         showButtons() {
             const lastPhase = this.phases[this.phases.length - 1];
-
+            
             if(lastPhase.publishedRegistrations || (lastPhase.publishTimestamp && lastPhase.publishTimestamp.isPast())) {
                 return false;
             } else {

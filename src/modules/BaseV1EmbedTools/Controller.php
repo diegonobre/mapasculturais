@@ -77,25 +77,6 @@ class Controller extends \MapasCulturais\Controllers\Opportunity
         $this->render("registration-form", ['entity' => $entity]);
     }
 
-    public function GET_reportmanager()
-    {
-        $app = App::i();
-
-        $entity = $this->getEntityAndCheckPermission('@control');
-
-        $app->hook('mapas.printJsObject:before', function () use($app) {
-            $app->view->jsObject['request'] = [
-                'controller' => $this->controller->id,
-                'action' => $this->controller->action,
-                'urlData' => $this->controller->urlData,
-            ];
-
-            $this->jsObject['request']['id'] = $this->controller->data['id'] ?? null;
-        }, 100);
-
-        $this->render("report-manager",['entity' => $entity]);
-    }
-
     public function GET_evaluationforms()
     {
         $this->entityClassName = "MapasCulturais\\Entities\\Registration";
@@ -124,7 +105,7 @@ class Controller extends \MapasCulturais\Controllers\Opportunity
     {
         $this->entityClassName = "MapasCulturais\\Entities\\Registration";
         $this->layout = "embedtools-registration";
-        $entity = $this->getEntityAndCheckPermission('viewUserEvaluation');
+        $entity = $this->getEntityAndCheckPermission('view');
         $this->render("registration-view",['entity' => $entity, 'merge_phases' => true]);
     }
 

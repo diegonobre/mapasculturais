@@ -6,7 +6,8 @@ app.component('entity-table', {
         const hasSlot = name => !!slots[name]
         const messages = useMessages();
         const text = Utils.getTexts('entity-table')
-        return { messages, text, hasSlot};
+        const global = useGlobalState();
+        return { messages, text, hasSlot, global };
     },
 
     props: {
@@ -51,12 +52,7 @@ app.component('entity-table', {
         },
         sortOptions: {
             type: Array,
-            default: [
-                { value: 'createTimestamp DESC', label: __('mais recentes primeiro', 'entity-table') },
-                { value: 'createTimestamp ASC',  label: __('mais antidas primeiro', 'entity-table') },
-                { value: 'updateTimestamp DESC', label: __('modificadas recentemente', 'entity-table') },
-                { value: 'updateTimestamp ASC',  label: __('modificadas há mais tempo', 'entity-table') },
-            ]
+            default: $MAPAS.config.entityTable.sortOptions
         },
         identifier: {
             type: String,
@@ -75,21 +71,39 @@ app.component('entity-table', {
         hideActions: Boolean,
         hideHeader: Boolean,
         rawProcessor: Function,
+        /**
+         * Entidade dona do contexto da tabela (ex.: opportunity/phase).
+         * Quem tem @control nela pode salvar o padrão para os demais usuários.
+         * Listagens gerais (agent/space/…) não passam isso — só saasSuperAdmin.
+         */
+        columnsConfigEntity: {
+            type: [Entity, Object],
+            default: null,
+        },
     },
 
     created() {
-        const visible = localStorage[this.sessionTitle] ? localStorage[this.sessionTitle].split(",") : this.visible instanceof Array ? this.visible : this.visible.split(",");
-        const required = this.required instanceof Array ? this.required : this.required.split(",");
+        const required = this.required instanceof Array ? this.required : this.required.split(",").filter(Boolean);
+        const localColumnsConfig = this.getLocalColumnsConfig();
+        const defaultVisible = this.visible instanceof Array ? this.visible : this.visible.split(",").filter(Boolean);
+        const globalConfig = this.globalColumnsConfig;
 
         this.originalQuery = JSON.parse(JSON.stringify(this.query));
-        for(let header of this.columns) {
+        for (let header of this.columns) {
             header.slug = this.parseSlug(header);
             header.required = required.includes(header.slug);
-            if (this.allHeaders) {
-                header.visible = true;
-            } else {
-                header.visible = visible.includes(header.slug) || required.includes(header.slug);
-            }
+        }
+
+        this.columns = this.resolveColumnOrder(this.columns, localColumnsConfig, globalConfig);
+        const visibleSet = this.resolveVisibleColumns({
+            required,
+            defaultVisible,
+            localColumnsConfig,
+            globalConfig
+        });
+
+        for (let header of this.columns) {
+            header.visible = this.allHeaders ? true : visibleSet.includes(header.slug) || required.includes(header.slug);
         }
     },
 
@@ -121,6 +135,7 @@ app.component('entity-table', {
     },
 
     data() {
+        let fromToStatus = $MAPAS.config.entityTable.fromToStatus
         const id = this.query['@opportunity'] ?? '';
         const sessionTitle = this.controller + ':' + this.endpoint + ':' + id + ':' + this.identifier;
         
@@ -137,6 +152,7 @@ app.component('entity-table', {
         }
 
         return {
+            fromToStatus,
             apiController: this.controller || this.type,
             entitiesOrder: this.order,
             columns,
@@ -159,16 +175,23 @@ app.component('entity-table', {
             projectTypes: $DESCRIPTIONS.project.type.options,
             spaceTypes: $DESCRIPTIONS.space.type.options,
             seals,
+            dragColumnSlug: null,
+            dropTargetSlug: null,
+            dropPosition: null,
+            columnsSearchText: '',
+            globalColumnsConfigs: $MAPAS.config.entityTable.columnsConfig?.tables || {},
+            _columnDragLastY: null,
+            _columnDragRaf: null,
         }
+    },
+
+    beforeUnmount() {
+        this.stopColumnDragAutoScroll();
     },
 
     watch: {
         columns: {
             handler(){
-                if (this.showIndex) {
-                    localStorage.setItem(this.sessionTitle, this.visibleColumns.map((column) => column.slug));
-                }
-
                 if(this.$refs.contentTable) {
                     this.$refs.contentTable.style.width = 'auto';
                 }
@@ -181,6 +204,55 @@ app.component('entity-table', {
     },
 
     computed: {
+        /**
+         * Chave única do padrão da tabela.
+         * Ex.: opportunity-findRegistrations-65-registrationsList
+         * Listagens gerais: agent-find-agentTable
+         */
+        globalColumnsKey() {
+            const scopeId = this.query?.['@opportunity']
+                ?? this.columnsConfigEntity?.id
+                ?? '';
+            const parts = [
+                this.controller || this.type || 'entity',
+                this.endpoint || 'find',
+                scopeId,
+                this.identifier || 'default',
+            ];
+
+            return parts
+                .map((part) => String(part ?? '').replace(/[^a-zA-Z0-9_-]/g, '-'))
+                .filter((part) => part !== '')
+                .join('-')
+                .replace(/-+/g, '-');
+        },
+
+        /**
+         * Fallback sem o id da entidade (padrão de sistema daquele tipo de tabela).
+         * Ex.: opportunity-findRegistrations-registrationsList
+         */
+        globalColumnsFallbackKey() {
+            const parts = [
+                this.controller || this.type || 'entity',
+                this.endpoint || 'find',
+                this.identifier || 'default',
+            ];
+
+            return parts
+                .map((part) => String(part ?? '').replace(/[^a-zA-Z0-9_-]/g, '-'))
+                .filter((part) => part !== '')
+                .join('-')
+                .replace(/-+/g, '-');
+        },
+
+        canManageColumnsGlobal() {
+            const entity = this.columnsConfigEntity;
+            if (entity?.currentUserPermissions?.['@control']) {
+                return true;
+            }
+            return !!$MAPAS.config.entityTable.canManageColumnsGlobal;
+        },
+
         visibleColumns() {
             const columns = this.columns.filter((col) => col.visible);
             return columns;
@@ -190,8 +262,44 @@ app.component('entity-table', {
             return this.visibleColumns.length == this.columns.length;
         },
 
+        filteredColumns() {
+            const search = (this.columnsSearchText || '').toLowerCase().trim();
+            if (!search) {
+                return this.columns;
+            }
+
+            return this.columns.filter(column => {
+                const label = (column.text || '').toString().toLowerCase();
+                const slug = (column.slug || '').toString().toLowerCase();
+                return label.includes(search) || slug.includes(search);
+            });
+        },
+
         $description() {
             return $DESCRIPTIONS[this.type];
+        },
+
+        globalColumnsConfig() {
+            const tables = this.globalColumnsConfigs || {};
+            const key = this.globalColumnsKey;
+            if (tables[key]) {
+                return tables[key];
+            }
+
+            // Padrão de sistema (sem id da oportunidade/entidade)
+            const fallbackKey = this.globalColumnsFallbackKey;
+            if (fallbackKey && fallbackKey !== key && tables[fallbackKey]) {
+                return tables[fallbackKey];
+            }
+
+            // Compatível com chaves antigas (ex.: opportunity.json / identifier)
+            for (const legacy of [this.identifier, this.controller, this.type, this.apiController]) {
+                if (legacy && tables[legacy]) {
+                    return tables[legacy];
+                }
+            }
+
+            return null;
         },
 
         advancedFilters() {
@@ -214,7 +322,7 @@ app.component('entity-table', {
                 }
             }
 
-            return filters;
+            return this.divideFiltersInColumns(filters);
         },
 
         hasFilters() {
@@ -280,7 +388,7 @@ app.component('entity-table', {
         spreadsheetQuery() {
             let spreadsheetQuery =  Object.assign({}, this.query);
 
-            spreadsheetQuery['@select'] = this.visibleColumns.map(column => column.slug).join(',');
+            spreadsheetQuery['@select'] = this.buildSpreadsheetExportSelect();
             spreadsheetQuery['@order'] = this.entitiesOrder;
 
             spreadsheetQuery = Object.fromEntries(
@@ -309,6 +417,347 @@ app.component('entity-table', {
     },
 
     methods: {
+        normalizeHeaders(headers) {
+            const seen = new Set();
+            return headers.filter(obj => {
+                const key = obj.value || obj.slug;
+                return seen.has(key) ? false : seen.add(key);
+            });
+        },
+
+        /**
+         * Fragmentos de @select na mesma ordem das colunas visíveis (global + local + arraste).
+         * Em inscrições, normaliza owner?. e anexos para o formato esperado pelo export/job.
+         */
+        buildSpreadsheetExportSelect() {
+            const seen = new Set();
+            const fragments = [];
+
+            const pushFragment = (token) => {
+                const t = (token || '').toString().trim();
+                if (!t || seen.has(t)) {
+                    return;
+                }
+                seen.add(t);
+                fragments.push(t);
+            };
+
+            for (const column of this.visibleColumns) {
+                for (const part of this.columnToExportSelectFragments(column)) {
+                    pushFragment(part);
+                }
+            }
+
+            return fragments.join(',');
+        },
+
+        /**
+         * Export fragments for a single column.
+         * An explicit `exportField` always wins: it is the API/job field name,
+         * while `value` is a Vue display expression that must never reach the @select.
+         */
+        columnToExportSelectFragments(column) {
+            if (Object.hasOwn(column, 'exportField')) {
+                return column.exportField ? [String(column.exportField)] : [];
+            }
+
+            const raw = (column.value !== undefined && column.value !== null && String(column.value).trim() !== '')
+                ? String(column.value).trim()
+                : String(column.slug || '').trim();
+
+            if (!raw) {
+                return [];
+            }
+
+            if (this.type === 'registration') {
+                if (raw === 'attachments') {
+                    return ['files'];
+                }
+                if (raw === 'editable') {
+                    return ['editableUntil', 'editSentTimestamp'];
+                }
+                const ownerOptional = raw.match(/^owner\?\.(.+)$/);
+                if (ownerOptional) {
+                    return [`owner.{${ownerOptional[1]}}`];
+                }
+            }
+
+            return [raw];
+        },
+
+        getLocalColumnsConfig() {
+            const value = localStorage.getItem(this.sessionTitle);
+            if (!value) {
+                return null;
+            }
+
+            try {
+                const parsed = JSON.parse(value);
+                if (parsed?.userDefined === true && Array.isArray(parsed.visible)) {
+                    return {
+                        visible: parsed.visible,
+                        order: Array.isArray(parsed.order) ? parsed.order : [],
+                    };
+                }
+                localStorage.removeItem(this.sessionTitle);
+            } catch (error) {
+                // formato legado não representa override explícito do usuário
+                localStorage.removeItem(this.sessionTitle);
+            }
+
+            return null;
+        },
+
+        resolveColumnOrder(headers, localConfig, globalConfig) {
+            const normalized = this.normalizeHeaders(headers).map(header => ({ ...header }));
+            const currentSlugs = normalized.map(header => this.parseSlug(header));
+            const orderedSlugs = [];
+            const pushUnique = (slug) => {
+                if (currentSlugs.includes(slug) && !orderedSlugs.includes(slug)) {
+                    orderedSlugs.push(slug);
+                }
+            };
+
+            (localConfig?.order || []).forEach(pushUnique);
+            (globalConfig?.order || []).forEach(pushUnique);
+            currentSlugs.forEach(pushUnique);
+
+            // Avaliacao → Bonus → Pontuacao sempre contiguas na tabela de inscricoes
+            if (this.type === 'registration') {
+                const scoreGroup = ['consolidatedResult', 'appliedPointReward', 'score'];
+                const present = scoreGroup.filter(slug => orderedSlugs.includes(slug));
+                if (present.length > 1) {
+                    const firstIndex = Math.min(...present.map(slug => orderedSlugs.indexOf(slug)));
+                    const withoutGroup = orderedSlugs.filter(slug => !scoreGroup.includes(slug));
+                    orderedSlugs.length = 0;
+                    orderedSlugs.push(
+                        ...withoutGroup.slice(0, firstIndex),
+                        ...present,
+                        ...withoutGroup.slice(firstIndex)
+                    );
+                }
+            }
+
+            const headerBySlug = {};
+            normalized.forEach(header => {
+                headerBySlug[this.parseSlug(header)] = header;
+            });
+
+            return orderedSlugs.map(slug => headerBySlug[slug]).filter(Boolean);
+        },
+
+        resolveVisibleColumns({ required, defaultVisible, localColumnsConfig, globalConfig }) {
+            let visible = [];
+            if (this.allHeaders) {
+                visible = this.columns.map(column => column.slug);
+            } else if (Array.isArray(localColumnsConfig?.visible) && localColumnsConfig.visible.length) {
+                visible = [...localColumnsConfig.visible];
+
+                // Colunas novas do default que o usuário nunca configurou (não estão
+                // no order/visible salvos) — ex.: "score"/Pontuação reintroduzida.
+                const known = new Set([
+                    ...(localColumnsConfig.visible || []),
+                    ...(localColumnsConfig.order || []),
+                ]);
+                defaultVisible.forEach(slug => {
+                    if (slug && !known.has(slug) && !visible.includes(slug)) {
+                        visible.push(slug);
+                    }
+                });
+            } else if (Array.isArray(globalConfig?.visible) && globalConfig.visible.length) {
+                visible = [...globalConfig.visible];
+
+                const known = new Set([
+                    ...(globalConfig.visible || []),
+                    ...(globalConfig.order || []),
+                    ...(globalConfig.known || []),
+                ]);
+                defaultVisible.forEach(slug => {
+                    if (slug && !known.has(slug) && !visible.includes(slug)) {
+                        visible.push(slug);
+                    }
+                });
+            } else {
+                visible = [...defaultVisible];
+            }
+
+            required.forEach(slug => {
+                if (!visible.includes(slug)) {
+                    visible.push(slug);
+                }
+            });
+
+            return visible;
+        },
+
+        persistLocalColumnsConfig() {
+            const data = {
+                order: this.columns.map(column => column.slug),
+                visible: this.visibleColumns.map(column => column.slug),
+                userDefined: true,
+                updatedAt: new Date().toISOString(),
+            };
+            localStorage.setItem(this.sessionTitle, JSON.stringify(data));
+        },
+
+        columnIndex(slug) {
+            return this.columns.findIndex(column => column.slug === slug);
+        },
+
+        clearColumnDropIndicator() {
+            this.dropTargetSlug = null;
+            this.dropPosition = null;
+        },
+
+        startColumnDragAutoScroll() {
+            this.stopColumnDragAutoScroll();
+
+            const tick = () => {
+                if (!this.dragColumnSlug) {
+                    this._columnDragRaf = null;
+                    return;
+                }
+
+                const list = this.$refs.columnsList;
+                if (list && this._columnDragLastY != null) {
+                    const rect = list.getBoundingClientRect();
+                    const threshold = 48;
+                    const maxSpeed = 22;
+                    const y = this._columnDragLastY;
+
+                    if (y < rect.top + threshold) {
+                        const intensity = Math.min(1, (rect.top + threshold - y) / threshold);
+                        list.scrollTop -= Math.ceil(maxSpeed * intensity);
+                    } else if (y > rect.bottom - threshold) {
+                        const intensity = Math.min(1, (y - (rect.bottom - threshold)) / threshold);
+                        list.scrollTop += Math.ceil(maxSpeed * intensity);
+                    }
+                }
+
+                this._columnDragRaf = requestAnimationFrame(tick);
+            };
+
+            this._columnDragRaf = requestAnimationFrame(tick);
+        },
+
+        stopColumnDragAutoScroll() {
+            if (this._columnDragRaf) {
+                cancelAnimationFrame(this._columnDragRaf);
+                this._columnDragRaf = null;
+            }
+            this._columnDragLastY = null;
+        },
+
+        onColumnDragStart(event, slug) {
+            if (!this.showIndex) {
+                return;
+            }
+            this.dragColumnSlug = slug;
+            this.clearColumnDropIndicator();
+            this._columnDragLastY = event.clientY;
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', slug);
+            this.startColumnDragAutoScroll();
+        },
+
+        onColumnDragOver(event, targetSlug = null) {
+            if (!this.showIndex || !this.dragColumnSlug) {
+                return;
+            }
+            event.preventDefault();
+            this._columnDragLastY = event.clientY;
+            event.dataTransfer.dropEffect = 'move';
+
+            if (!targetSlug || targetSlug === this.dragColumnSlug) {
+                this.clearColumnDropIndicator();
+                return;
+            }
+
+            const row = event.currentTarget;
+            if (!row?.getBoundingClientRect) {
+                return;
+            }
+
+            const rect = row.getBoundingClientRect();
+            const position = event.clientY < rect.top + (rect.height / 2) ? 'before' : 'after';
+            this.dropTargetSlug = targetSlug;
+            this.dropPosition = position;
+        },
+
+        onColumnDrop(event, targetSlug) {
+            if (!this.showIndex) {
+                return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+
+            const sourceSlug = this.dragColumnSlug || event.dataTransfer.getData('text/plain');
+            const position = (this.dropTargetSlug === targetSlug && this.dropPosition)
+                ? this.dropPosition
+                : 'before';
+
+            this.onColumnDragEnd();
+
+            if (!sourceSlug || !targetSlug || sourceSlug === targetSlug) {
+                return;
+            }
+
+            const sourceIndex = this.columnIndex(sourceSlug);
+            let targetIndex = this.columnIndex(targetSlug);
+            if (sourceIndex < 0 || targetIndex < 0) {
+                return;
+            }
+
+            if (position === 'after') {
+                targetIndex += 1;
+            }
+
+            const [sourceColumn] = this.columns.splice(sourceIndex, 1);
+            if (sourceIndex < targetIndex) {
+                targetIndex -= 1;
+            }
+            this.columns.splice(targetIndex, 0, sourceColumn);
+            this.persistLocalColumnsConfig();
+        },
+
+        onColumnDragEnd() {
+            this.dragColumnSlug = null;
+            this.clearColumnDropIndicator();
+            this.stopColumnDragAutoScroll();
+        },
+
+        async saveGlobalColumnsConfig() {
+            if (!this.canManageColumnsGlobal) {
+                return;
+            }
+
+            const apiController = this.controller || this.type;
+            const api = new API(apiController);
+            const entity = this.columnsConfigEntity;
+            const payload = {
+                tableKey: this.globalColumnsKey,
+                entityType: entity?.__objectType || null,
+                entityId: entity?.id || null,
+                order: this.columns.map(column => column.slug),
+                visible: this.visibleColumns.map(column => column.slug),
+                required: this.columns.filter(column => column.required).map(column => column.slug),
+                known: this.columns.map(column => column.slug),
+            };
+
+            const response = await api.POST('saveTableColumnsConfig', payload);
+            if (!response.ok) {
+                this.messages.error(this.text('erro ao salvar padrao global'));
+                return;
+            }
+
+            const data = await response.json();
+            this.globalColumnsConfigs[this.globalColumnsKey] = data.config || {};
+            this.messages.success(this.text('padrao global salvo'));
+        },
+
+        keyword(entities) {
+            entities.refresh()
+        },
         getFilterLabels(prop, value) {
             const propLabels = {
                 '@keyword': __('palavras-chave', 'entity-table'),
@@ -458,67 +907,175 @@ app.component('entity-table', {
             return header.value;
         },
 
+        isAgentFileFieldValue(val) {
+            return Boolean(
+                val
+                && typeof val === 'object'
+                && !Array.isArray(val)
+                && !(val instanceof McDate)
+                && val.url
+                && (val.name || val.id || val.mimeType)
+            );
+        },
+
+        formatFileFieldValue(val) {
+            if (!val) {
+                return '';
+            }
+            if (typeof val === 'string') {
+                return val;
+            }
+            if (typeof val !== 'object') {
+                return String(val);
+            }
+            const url = val.url || '';
+            const name = val.name || url || '';
+            if (url) {
+                return `<a href="${url}" target="_blank" rel="noopener noreferrer">${name || url}</a>`;
+            }
+            return name;
+        },
+
         getEntityData(obj, prop) {
-            let val = eval(`obj.${prop}`);
+            try {
+                let val = eval(`obj.${prop}`);
 
-            const description = this.$description[prop];
+                const description = this.$description[prop];
 
-            if(description) {
-                if(description.options) {
-                    if(description.options[val]) {
-                        return description.options[val];
+                if(description) {
+                    if(description.options) {
+                        if(description.options[val]) {
+                            return description.options[val];
+                        }
+                    }
+                    switch (description.type) {
+                        case 'custom-table': {
+                            if (typeof val === 'string') {
+                                try { val = JSON.parse(val); } catch { val = []; }
+                            }
+
+                            const columns = description.registrationFieldConfiguration?.config?.columns ?? [];
+                            val = Array.isArray(val) && Array.isArray(columns) ? val.map(row => {
+                                const values = columns.map((column, index) => {
+                                    const value = row?.[`col${index}`];
+                                    return ['string', 'number', 'boolean'].includes(typeof value) ? String(value) : '';
+                                });
+
+                                return values.some(value => value !== '')
+                                    ? columns.map((column, index) => `${column.name ?? ''}: ${values[index]}`).join(' | ')
+                                    : '';
+                            }).filter(Boolean).join(' || ') : '';
+
+                            // A célula usa v-html; nomes e valores da tabela devem aparecer como texto.
+                            const escapes = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+                            val = val.replace(/[&<>"']/g, character => escapes[character]);
+                            break;
+                        }
+                        case 'multiselect':
+                        case 'array':
+                            if (Array.isArray(val)) {
+                                val = val.filter(item => item !== "null" && item !== "").join(', ');
+                            } else {
+                                val = null;
+                            }
+                            break;
+                        case 'links':
+                            var hasVal = val != null ?  (val !== '"null"' || val !== 'null' ? true : false) : false ;
+                            if (hasVal && !Array.isArray(val)) {
+                                
+                                const parsed = val !== '' ? JSON.parse(val) : null ;
+                                if (parsed && parsed !== 'null' && Array.isArray(parsed)) {
+                                    val = parsed.map(item => `${item.title}: ${item.value},`).join('\n');
+                                } else {
+                                    val = null;
+                                }
+                            }
+                            
+                            if (hasVal &&  Array.isArray(val)) {
+                                val = val.map(item => `${item.title}: ${item.value},`).join('\n');
+                            }
+
+                            val = null;
+                            break;
+                        case 'point':
+                            val = val ? `${val.lat}, ${val.lng}` : null
+                            break;
+                        case 'addresses':
+                            if(val === null || val === undefined || val === 'null' || val === '') {
+                                val = null;
+                            }
+                            if (typeof val === 'string') {
+                                try { val = JSON.parse(val); } catch { val = null; }
+                            }
+                            
+                            if (Array.isArray(val)) {
+                                
+                                val = val.map(item =>
+                                    `${item.nome || ''}: ${item.logradouro || ''}, ${item.numero || ''}, ${item.bairro || ''}, ${item.cidade || ''}, ${item.complemento || ''} - ${item.estado || ''}, ${item.cep || ''}`
+                                ).join(',');
+                            } else {
+                                val = null;
+                            }
+                            break;
+                        case 'location':
+                            val = val?.address ? val.address : val?.endereco ? val.endereco : null;
+                            break;
+                        case 'boolean':
+                            if (val === true || val === 'true' || val === 1 || val === '1') {
+                                val = this.text('sim');
+                            } else if (val === false || val === 'false' || val === 0 || val === '0') {
+                                val = this.text('nao');
+                            } else {
+                                val = '';
+                            }
+                            break;
+                        case 'file':
+                            val = this.formatFileFieldValue(val);
+                            break;
+                        
                     }
                 }
-                switch (description.type) {
-                    case 'multiselect':
-                    case 'array':
-                        val = val?.filter(item => item !== "null" && item !== "").join(', ')
-                        break;
-                    case 'links':
-                        val = (!val || val === '"null"' || JSON.parse(val) === '"null"' || val == 'null') ? null : val;                                      
-                        val = val ? JSON.parse(val).map(item => `${item.title}: ${item.value},`).join('\n') : null
-                        break;
-                    case 'point':
-                        val = val ? `${val.lat}, ${val.lng}` : null
-                        break;
-                    case 'addresses':
-                        let _val = val;
-                        if(typeof val === 'string') {
-                            _val = JSON.parse(val);
-                        } 
 
-                        val = val ? JSON.parse(val).map(item => `${item.nome}: ${item.logradouro}, ${item.numero}, ${item.bairro}, ${item.cidade}, ${item.complemento}  - ${item.estado}, ${item.cep}`).join('<br>') : null
-                        break;
-                    case 'boolean':
-                        if(prop == "publicLocation") {
-                            val = val ? this.text('sim') : this.text('nao')
-                        } else {
-                            val = val
-                        }
-                        break;
-                    default:
-                        val = val
+                // Anexos de agent-owner-field (type=file) podem chegar como objeto
+                // mesmo quando description.type permanece agent-owner-field.
+                if (this.isAgentFileFieldValue(val)) {
+                    val = this.formatFileFieldValue(val);
                 }
-            }
 
-            if(prop == 'singleUrl' ) {
-                val = `<a href="${val}">${val}</a>`;
-            }
-
-            if(val && prop == 'seals[0]?.createTimestamp' ) {
-                let _val = new McDate(val.date);
-                val = _val.date('numeric year') + ' ' + _val.time('2-digit');
-            }
-
-            if(val instanceof McDate) {
-                if(description.type == 'datetime') {
-                    val = val.date('numeric year') + ' ' + val.time('2-digit');
-                } else {
-                    val = val.date('numeric year');
+                if(prop == 'singleUrl' ) {
+                    val = `<a href="${val}">${val}</a>`;
                 }
-            }
 
-            return val;
+                if(val && prop == 'seals[0]?.createTimestamp' ) {
+                    let _val = new McDate(val.date);
+                    val = _val.date('numeric year') + ' ' + _val.time('2-digit');
+                }
+
+                if(val instanceof McDate) {
+                    if(description.type == 'datetime') {
+                        val = val.date('numeric year') + ' ' + val.time('2-digit');
+                    } else {
+                        val = val.date('numeric year');
+                    }
+                }
+
+                if (prop == 'type') {
+                    val = val.name
+                }
+
+                if (prop == 'public') {
+                    val = val ? this.text('sim') : this.text('nao')
+                }
+
+                if (prop == 'status') {
+                    let type = this.type.charAt(0).toUpperCase() + this.type.slice(1);
+                    val = this.fromToStatus[type]?.[val] || val;
+                }
+
+                return val;
+            } catch (error) {
+                console.error("erro ao carregar prop => ", prop);
+            }
         },
 
         resetHeaders() {
@@ -537,6 +1094,7 @@ app.component('entity-table', {
         toggleHeaders(event) {
             const field = event.target.value;
             let column = null;
+            let changed = false;
 
             for (let header of this.columns) {
                 if (header.slug == field) {
@@ -547,12 +1105,17 @@ app.component('entity-table', {
                         this.messages.error(this.text('item obrigatório') + ' ' + header.text);
                     } else {
                         header.visible = !header.visible;
+                        changed = true;
                     }
                 }
             }
 
             if (column && !column.visible) {
                 delete this.query[field];
+            }
+
+            if (changed) {
+                this.persistLocalColumnsConfig();
             }
         },
 
@@ -564,6 +1127,7 @@ app.component('entity-table', {
                     header.visible = true;
                 }
             }
+            this.persistLocalColumnsConfig();
         },
 
         clearFilters(entities) {
@@ -755,5 +1319,23 @@ app.component('entity-table', {
             let _option = option.split(':');
             return _option.length > 1 ? _option[1] : _option[0];
         },
-    },
+
+        divideFiltersInColumns(campos, numGrupos = 4) {
+            const keys = Object.keys(campos);
+            const totalCampos = keys.length;
+            const camposPorGrupo = Math.ceil(totalCampos / numGrupos);
+            const grupos = {};
+
+            for (let i = 0; i < numGrupos; i++) {
+                const start = i * camposPorGrupo;
+                const sliceKeys = keys.slice(start, start + camposPorGrupo);
+                grupos[`grupo${i + 1}`] = {};
+                sliceKeys.forEach(key => {
+                grupos[`grupo${i + 1}`][key] = campos[key];
+                });
+            }
+
+            return grupos;
+        },
+    }
 });

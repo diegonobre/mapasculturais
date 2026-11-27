@@ -3,28 +3,29 @@
 namespace Spreadsheets;
 
 use DateTime;
+use MapasCulturais\i;
 use MapasCulturais\App;
 use MapasCulturais\Definitions;
-use MapasCulturais\Definitions\JobType;
 use MapasCulturais\Entities\Job;
 use MapasCulturais\Entities\Agent;
 use MapasCulturais\Entities\Event;
 use MapasCulturais\Entities\Space;
-use MapasCulturais\Entities\Project;
-use MapasCulturais\Entities\Opportunity;
-use MapasCulturais\Entities\Registration;
-use MapasCulturais\Entities\RegistrationEvaluation;
-use MapasCulturais\i;
 use MapasCulturais\Types\GeoPoint;
-use PhpOffice\PhpSpreadsheet\Spreadsheet;
-use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use MapasCulturais\Entities\Project;
+use MapasCulturais\Definitions\JobType;
+use MapasCulturais\Entities\Opportunity;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Writer\Csv;
 use PhpOffice\PhpSpreadsheet\Writer\Ods;
-use PhpOffice\PhpSpreadsheet\Style\Alignment;
-use PhpOffice\PhpSpreadsheet\Style\Fill;
-use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use MapasCulturais\Entities\Registration;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use Symfony\Component\VarDumper\Cloner\Data;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use MapasCulturais\Entities\RegistrationEvaluation;
+use MapasCulturais\Entities\User;
 
 /**
  * @property-read string $fileGroup
@@ -55,7 +56,9 @@ abstract class SpreadsheetJob extends JobType
 
     protected function _execute(Job $job)
     {
+        $app = App::i();
         
+        ini_set('memory_limit', $app->config['app.export.memoryLimit']);
         $entity_class_name = $job->entityClassName;
         $file_class = $job->owner->getFileClassName();
         
@@ -133,11 +136,35 @@ abstract class SpreadsheetJob extends JobType
         
         $row = $has_sub_header ? count($header)+1 : 2;
         while($batch = $this->getBatch($job)) {
+            $batch_count = count($batch);
             foreach ($batch as $data) {
                 $new_data = [];
+
                 foreach($sub_header as $prop => $label) {
                     if (isset($data[$prop]) && is_array($data[$prop])) {
-                        $new_data[] = implode(', ', $data[$prop]);
+                        // Anexo type=file: array associativo {id,name,url,mimeType}
+                        if (
+                            !array_is_list($data[$prop])
+                            && !empty($data[$prop]['url'])
+                            && is_string($data[$prop]['url'])
+                            && (isset($data[$prop]['name']) || isset($data[$prop]['id']) || isset($data[$prop]['mimeType']))
+                        ) {
+                            $new_data[] = $data[$prop]['url'];
+                            continue;
+                        }
+
+                        $middle_data = [];
+
+                        foreach ($data[$prop] as $key => $value){
+                            
+                            if(is_array($value)){
+                                $middle_data[] = implode(', ', $value);
+                            }else{
+                                $middle_data[] = $value;
+                            }
+                        }
+                        
+                        $new_data[] = implode(', ', $middle_data);
                     } else {
                         $new_data[] = isset($data[$prop]) ? $data[$prop] : null; 
                     }
@@ -151,6 +178,11 @@ abstract class SpreadsheetJob extends JobType
                     if($value instanceof GeoPoint) {
                         $value = "{$value}";
                         continue;
+                    }
+
+                    // Objetos de anexo ({url, name, ...}) que escaparam da normalização.
+                    if (is_object($value) && isset($value->url) && is_string($value->url) && $value->url !== '') {
+                        $value = $value->url;
                     }
 
                     // Insere link quando 
@@ -171,10 +203,18 @@ abstract class SpreadsheetJob extends JobType
                     }
 
                     //TODO: Avaliar como implementar o tratamento de fórmulas apenas para campos preenchidos pelo usuário e permitir que as fórmulas permaneçam nos campos com preenchimento do próprio sistema.
+                    if(is_string($value) && $value && $value[0] === '=') {
+                        $value = "'$value";
+                    }
                 }
 
                 $sheet->fromArray($new_data, null, "A$row");
                 $row++;
+            }
+
+            // Última página: evita loop se a fonte de dados repetir itens sem esvaziar.
+            if ($batch_count < $this->limit) {
+                break;
             }
         }
         
@@ -188,6 +228,20 @@ abstract class SpreadsheetJob extends JobType
         }
 
         $writer->save($path);
+
+        $owner_class = get_class($job->owner);
+        $owner_id = $job->owner->id;
+        $authenticated_user_id = $job->authenticatedUser?->id;
+
+        // Hooks de exportação podem instanciar entidades transitórias de metadata
+        // durante a montagem do lote. Limpar o EM aqui evita que o flush do File
+        // tente persisti-las junto com a planilha.
+        $app->em->clear();
+
+        /** @var \MapasCulturais\Entity $owner */
+        $owner = $app->repo($owner_class)->find($owner_id);
+        /** @var User|null $authenticated_user */
+        $authenticated_user = $authenticated_user_id ? $app->repo(User::class)->find($authenticated_user_id) : null;
         
         $mimeTypes = [
             'csv' => 'text/csv',
@@ -206,15 +260,19 @@ abstract class SpreadsheetJob extends JobType
         
         $file->private = true;
         $file->group = $this->fileGroup;
-        $file->owner = $job->owner;
+        $file->owner = $owner;
         $file->save(true);
         
         // Disparo de e-mail
         if(file_exists($file->path)) {
-            $this->sendSuccessMailNotification($job->authenticatedUser, $file, $entity_class_name);
+            if ($authenticated_user) {
+                $this->sendSuccessMailNotification($authenticated_user, $file, $entity_class_name);
+            }
         } else {
             $file->delete(true);
-            $this->sendErrorMailNotification($job->authenticatedUser, $entity_class_name);
+            if ($authenticated_user) {
+                $this->sendErrorMailNotification($authenticated_user, $entity_class_name);
+            }
         }
     
        return true;
@@ -393,6 +451,32 @@ abstract class SpreadsheetJob extends JobType
         ];
 
         return $entities[$class];
+    }
+
+    /**
+     * Limpa e padroniza textos para exportação (ex: planilhas), removendo tags HTML,
+     * caracteres invisíveis, normalizando quebras de linha e garantindo codificação UTF-8.
+     *
+     * @param string|null $text Texto original a ser sanitizado.
+     * @return string Texto limpo e seguro para exportação.
+     */
+    function cleanTextForExport(?string $text): string {
+        if ($text === null) {
+            return '';
+        }
+
+        // Evita interpretação como fórmula no ODS/Excel
+        if (preg_match('/^[=+\-@]/', $text)) {
+            $text = "'" . $text;
+        }
+
+        $text = str_replace('\n', "\n", $text); // "\n" como string literal
+        $text = strip_tags($text);
+        $text = mb_convert_encoding($text, 'UTF-8', 'UTF-8');
+        $text = preg_replace('/[\x00-\x1F\x7F]/u', '', $text);
+
+
+        return trim($text);
     }
 
     /**

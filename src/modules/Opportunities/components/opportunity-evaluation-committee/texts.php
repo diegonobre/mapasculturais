@@ -5,6 +5,9 @@ return [
     'enable' => i::__('Habilitar'),
     'disable' => i::__('Desabilitar'),
     'reopenEvaluationsSuccess' => i::__('Avaliações reabertas com sucesso'),
+    'reopenEvaluationsError' => i::__('Não foi possível reabrir as avaliações.'),
+    'reopenListError' => i::__('Não foi possível carregar as avaliações enviadas.'),
+    'reopenRefreshError' => i::__('As avaliações foram reabertas, mas não foi possível atualizar a lista. Recarregue a página.'),
     'addDistribution' => i::__('A distribuição de avaliações foi atualizada com sucesso.'),
     'addCategory' => i::__('Categoria adicionada com sucesso.'),
     'removeCategory' => i::__('Categoria removida com sucesso.'),
@@ -13,4 +16,7 @@ return [
     'addProponentType' => i::__('Tipo de proponente adicionado com sucesso.'),
     'removeProponentType' => i::__('Tipo de proponente removido com sucesso.'),
     'sem avaliações' => i::__('sem avaliações'),
+    'modificações salvas' => i::__('Modificações salvas'),
+    'reviewerReplaced' => i::__('Avaliador substituído com sucesso.'),
+    'reviewerNotReplaced' => i::__('Erro ao substituir avaliador.')
 ];

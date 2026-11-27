@@ -1503,6 +1503,14 @@ class Theme extends MapasCulturais\Theme {
                     $section_divisor->owner = $opportunity;
                     $section_divisor->fieldType = 'section';
                     $section_divisor->title = sprintf(i::__('%s - Inscrição %s'),$opportunity->name, $reg->id);
+                    
+                    if (count($opportunity->registrationFieldConfigurations) > 0) {
+                        $section_divisor->step = $opportunity->registrationFieldConfigurations[0]->step;
+                    } else {
+                        $section_divisor->step = count($opportunity->registrationFileConfigurations) > 0 ? 
+                            $opportunity->registrationFileConfigurations[0]->step : 1;
+                    }
+                    
                     $section_divisor->displayOrder = $i * 1000 -1;
                     $this->jsObject['entity']['registrationFieldConfigurations'][] = $section_divisor;
                 }
@@ -1513,9 +1521,13 @@ class Theme extends MapasCulturais\Theme {
                     $this->jsObject['entity']['registrationFieldConfigurations'][] = $field;
     
                     $field_name = $field->fieldName;
-                    
-                    if($reg->canUser("viewUserEvaluation") && !$reg->canUser("@control")){
-                        if(isset($opportunity->avaliableEvaluationFields[$field_name])){
+
+                    // Usa a lista da fase atual (contexto da avaliação), não a de cada fase anterior.
+                    $evaluation_fields = $current_registration->opportunity->avaliableEvaluationFields ?? [];
+                    $is_controller = $current_registration->opportunity->canUser("@control") || $reg->canUser("@control");
+
+                    if(!$is_controller && !empty($evaluation_fields)){
+                        if(isset($evaluation_fields[$field_name]) && ($evaluation_fields[$field_name] === true || $evaluation_fields[$field_name] === 'true')){
                             $this->jsObject['entity']['object']->$field_name = $reg->$field_name;
                         }
                     }else{
@@ -1801,6 +1813,8 @@ class Theme extends MapasCulturais\Theme {
             'Cancelar'      => i::__('Cancelar'),
             'confirmRemoveEntity'  => i::__('Você deseja excluir a entidade?'),
             'confirmDestroyEntity'  => i::__('Você deseja excluir definitivamente a entidade? Esta operação não poderá ser desfeita.'),
+            'confirmPublishRegistrations'  => i::__('ATENÇÃO, Essa ação é uma ação irreversível. Caso a próxima fase seja uma prestação de contas, primeiro crie a fase de prestação de contas para só depois fazer a publicação.'),
+            'confirmRemoveItem'  => i::__('Deseja remover este item?'),
         ]);
         $locale_specific_js = file_exists(dirname(__FILE__)  . '/assets/js/locale-specific/' . i::get_locale() . '.js') ? 'js/locale-specific/' . i::get_locale() . '.js' : 'js/locale-specific/default.js' ;
         $this->enqueueScript('app', 'mapasculturais-locale-specific', $locale_specific_js, array('mapasculturais'));
@@ -1861,6 +1875,7 @@ class Theme extends MapasCulturais\Theme {
 
         $this->enqueueScript('app', 'editable', 'js/editable.js', array('mapasculturais'));
         $this->localizeScript('editable', [
+            'confirmDeleteMetalistItem'    => i::__('Tem Certeza de que deseja excluir este item?'),
             'cancel'    => i::__('Cancelar Alteração (Esc)'),
             'confirm'    => i::__('Confirmar Alteração (Enter)'),
             'confirmC'    => i::__('Confirmar Alteração (Ctrl+Enter)'),
@@ -2087,9 +2102,11 @@ class Theme extends MapasCulturais\Theme {
             'allCategories' => i::__('Todas as categorias'),
             'selectFieldType' =>  i::__('Selecione o tipo de campo'),
             'fieldCreated' =>  i::__('Campo criado.'),
+            'fieldDuplicated' => i::__('Campo duplicado.'),
             'fieldRemoved' =>  i::__('Campo removido.'),
             'changesSaved' =>  i::__('Alterações Salvas.'),
             'attachmentCreated' =>  i::__('Anexo criado.'),
+            'attachmentDuplicated' => i::__('Anexo duplicado.'),
             'attachmentRemoved' =>  i::__('Anexo removido.'),
             'confirmAttachmentRemoved' =>  i::__('Deseja remover este anexo?'),
             'confirmRemoveModel' =>  i::__('Deseja remover este modelo?'),
@@ -2137,6 +2154,7 @@ class Theme extends MapasCulturais\Theme {
             'Anexos' => i::__('Anexos'),
             'Avaliação' => i::__('Avaliação'),
             'Status' => i::__('Status'),
+            'Isenção' => i::__('Isenção'),
             'spaceRelationRequestSent' =>  i::__('Sua requisição para relacionar o espaço {{space}} foi enviada.'),
 
             'conditionMandatory' => i::__('Informe a qual campo quer condicionar a obrigatoriedade'),
@@ -2153,7 +2171,10 @@ class Theme extends MapasCulturais\Theme {
             'providingAccount' => i::__('Ao enviar a prestação de contas, não será mais permitido editar os campos. tem certeza que deseja continuar?'),
             'disableColumns' => i::__('Não é permitido desabilitar todas as colunas da tabela'),
             'columnDisabling' => i::__('Não é permitido desabilitar a coluna'),
-            'fileTooBig' => i::__('O tamanho do arquivo excede o limite estabelecido')
+            'fileTooBig' => i::__('O tamanho do arquivo excede o limite estabelecido'),
+            'processingError' => i::__('Erro ao processar a solicitação'),
+            'validationProcessingError' => i::__('Erro ao processar validationErrors:'),
+            'validationError' => i::__('Erro de validação')
         ]);
 
         $this->enqueueScript('app', 'entity.module.subsiteAdmins', 'js/ng.entity.module.subsiteAdmins.js', array('ng-mapasculturais'));

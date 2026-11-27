@@ -14,7 +14,11 @@ return array(
             'validations' => array(
                 //'required' => \MapasCulturais\i::__('Seu nome completo ou jurídico deve ser informado.')
             ),
-            'available_for_opportunities' => true
+            'available_for_opportunities' => true,
+            'serialize' => function($value, $entity = null) {
+                $value = trim(preg_replace('/\s+/', ' ', $value));
+                return $value;
+            }
         ),
 
         'nomeSocial' => array(
@@ -24,7 +28,7 @@ return array(
         ),
 
         'escolaridade' => array(
-            'private' => false,
+            'private' => true,
             'label' => \MapasCulturais\i::__('Escolaridade'),
             'type' => 'select',
             'options' => array(
@@ -48,7 +52,7 @@ return array(
         ),
 
         'renda' => array(
-            'private' => false,
+            'private' => true,
             'label' => \MapasCulturais\i::__('Renda'),
             'type' => 'select',
             'options' => array(
@@ -67,7 +71,8 @@ return array(
         ),
 
         'pessoaDeficiente' => array(
-            'label' => 'Pessoa com deficiência',
+            'private' => true,
+            'label' => \MapasCulturais\i::__('Pessoa com deficiência'),
             'type' => 'multiselect',
             'options' => [
                 MapasCulturais\i::__('Nenhuma'),
@@ -80,6 +85,13 @@ return array(
                 MapasCulturais\i::__('Outras'),
             ],
             'available_for_opportunities' => true
+        ),
+        'pessoaDeficienciaAnexo' => array(
+            'private' => true,
+            'label' => \MapasCulturais\i::__('Pessoa com deficiência - Laudo (anexo)'),
+            'type' => 'file',
+            'file_group' => 'docs-pcd',
+            'available_for_opportunities' => true,
         ),
 
         'comunidadesTradicional' => array(
@@ -116,9 +128,16 @@ return array(
                 MapasCulturais\i::__('Retireiros do Araguaia'),
                 MapasCulturais\i::__('Ribeirinhos'),
                 MapasCulturais\i::__('Vazanteiros'),
-                MapasCulturais\i::__('Veredeiros'),                                
+                MapasCulturais\i::__('Veredeiros'),
             ),
             'available_for_opportunities' => true
+        ),
+        'comunidadesTradicionalAnexo' => array(
+            'private' => true,
+            'label' => \MapasCulturais\i::__('Comunidades tradicionais - Comprovação (anexo)'),
+            'type' => 'file',
+            'file_group' => 'docs-comunidades',
+            'available_for_opportunities' => true,
         ),
 
         'comunidadesTradicionalOutros' => array(
@@ -165,7 +184,7 @@ return array(
                 if (!$value && isset($entity->type) && $entity->type->id == 2) {
                     $value = $entity->documento;
                 }
-    
+
                 return Utils::formatCnpjCpf($value);
             },
             'validations' => array(
@@ -178,17 +197,18 @@ return array(
             'private' => true,
             'label' => \MapasCulturais\i::__('CNPJ - anexo'),
             'type' => 'file',
+            'file_group' => 'docs-cnpj',
             'available_for_opportunities' => true
         ),
         'cpf' => array(
             'private' => true,
-            'label' => \MapasCulturais\i::__('CPF'),
+            'label' => \MapasCulturais\i::__('CPF / Carteira de Identidade Nacional (CIN)'),
             'type' => 'cpf',
             'serialize' => function($value, $entity = null) {
                 /**@var MapasCulturais\App $this */
                 if(!$this->rcache->contains("$entity:SET_cpf")){
                     $this->rcache->save("$entity:SET_cpf", true);
-                    
+
                     if($entity->type && $entity->type->id == 1 && !$this->rcache->contains("$entity:SET_documento")){
                         $entity->documento = $value;
                     }
@@ -212,6 +232,7 @@ return array(
             'private' => true,
             'label' => \MapasCulturais\i::__('CPF - anexo'),
             'type' => 'file',
+            'file_group' => 'docs-cpf',
             'available_for_opportunities' => true
         ),
         'cnhNumero' => array(
@@ -225,6 +246,7 @@ return array(
             'private' => true,
             'label' => \MapasCulturais\i::__('CNH - anexo'),
             'type' => 'file',
+            'file_group' => 'docs-cnh',
             'available_for_opportunities' => true
         ),
         'cnhCategoria' => array(
@@ -257,20 +279,21 @@ return array(
             'private' => true,
             'label' => \MapasCulturais\i::__('RG - Documento'),
             'type' => 'rgNumero',
-            'available_for_opportunities' => true,
-            'readonly' => false
+            'readonly' => false,
+            'available_for_opportunities' => true
         ),
         'rgAnexo' => array(
             'private' => true,
             'label' => \MapasCulturais\i::__('RG - anexo'),
             'type' => 'file',
-            'available_for_opportunities' => true
+            'file_group' => 'docs-rg',
+            'available_for_opportunities' => true,
         ),
         'rgOrgaoEmissor' => array(
             'private' => true,
             'label' => \MapasCulturais\i::__('RG - Órgão Emissor'),
             'type' => 'text',
-            'available_for_opportunities' => true
+            'available_for_opportunities' => true,
         ),
         'rgUF' => [
             'private' => true,
@@ -304,8 +327,21 @@ return array(
                 'SP'=>'São Paulo',
                 'SE'=>'Sergipe',
                 'TO'=>'Tocantins',
-            )
+            ),
+            'available_for_opportunities' => true,
         ],
+        'passaporteNumero' => array(
+            'private' => true,
+            'label' => \MapasCulturais\i::__('Passaporte - Número'),
+            'available_for_opportunities' => true,
+        ),
+        'passaporteAnexo' => array(
+            'private' => true,
+            'label' => \MapasCulturais\i::__('Passaporte - anexo'),
+            'type' => 'file',
+            'file_group' => 'docs-passaporte',
+            'available_for_opportunities' => true,
+        ),
         'raca' => array(
             'private' => true,
             'label' => \MapasCulturais\i::__('Raça/cor'),
@@ -320,20 +356,37 @@ return array(
             ),
             'available_for_opportunities' => true
         ),
+        'racaAnexo' => array(
+            'private' => true,
+            'label' => \MapasCulturais\i::__('Raça/cor - Declaração (anexo)'),
+            'type' => 'file',
+            'file_group' => 'docs-raca',
+            'available_for_opportunities' => true,
+        ),
 
         'dataDeNascimento' => array(
             'private' => true,
             'label' => \MapasCulturais\i::__('Data de Nascimento/Fundação'),
             'type' => 'date',
-            'serialize' => function($value, $entity = null){
-               if(is_null($value)) { return null; }
-               $this->hook("entity(<<*>>).save:before", function() use ($entity){
+            'serialize' => function ($value, $entity = null) {
+                if (is_null($value)) {
+                    return null;
+                }
+
+                $this->hook("entity(<<*>>).save:before", function () use ($entity) {
                     /** @var MapasCulturais\Entity $entity */
-                    if($this->equals($entity)){
-                        $this->idoso = 1; 
+                    if ($this->equals($entity)) {
+                        $this->idoso = 1;
                     }
-               });
-               return (new DateTime($value))->format("Y-m-d");
+                });
+
+                if (is_array($value) && isset($value['_date'])) {
+                    $value = $value['_date'];
+                } elseif (is_object($value) && isset($value->_date)) {
+                    $value = $value->_date;
+                }
+
+                return $value ? (new \DateTime($value))->format("Y-m-d") : null;
             },
             'validations' => array(
                 'v::date("Y-m-d")' => \MapasCulturais\i::__('Data inválida').'{{format}}',
@@ -356,7 +409,7 @@ return array(
                 }
             },
             'unserialize' => function($value){
-                return $value ? true : false;
+                return $value == '1' ? true : false;
             },
             'available_for_opportunities' => true
         ),
@@ -447,10 +500,11 @@ return array(
             'available_for_opportunities' => true,
             'field_type' => 'email',
             'unserialize' => function($value, $agent = null){
-                if (!$value && $agent instanceof Agent) {
-                    return $agent->user->email;
+                $agent = (object) $agent;
+                $user = $agent->user ?? null;
+                if(!$value && $user && $user->email){
+                    return $user->email;
                 }
-
                 return $value;
             }
         ),
@@ -495,7 +549,7 @@ return array(
             'label' => \MapasCulturais\i::__('Endereço'),
             'type' => 'text'
         ),
-                    
+
         'En_CEP' => [
             'label' => \MapasCulturais\i::__('CEP'),
             'type' => 'cep',
@@ -619,7 +673,7 @@ return array(
             'validations' => array(
                 "v::oneOf(v::urlDomain('facebook.com'), v::regex('/^@?([-\w\d\.]+)$/i'))" => \MapasCulturais\i::__("O valor deve ser uma URL válida ou o nome ou id do usuário.")
             ),
-            'placeholder' => "nomedousuario ou iddousuario",
+            'placeholder' => \MapasCulturais\i::__('nomedousuario ou iddousuario'),
             'available_for_opportunities' => true
         ),
         'twitter' => array(
@@ -631,7 +685,7 @@ return array(
             'validations' => array(
                 "v::oneOf(v::urlDomain('x.com'), v::regex('/^@?([-\w\d\.]+)$/i'))" => \MapasCulturais\i::__("O valor deve ser uma URL ou usuário válido.")
             ),
-            'placeholder' => "nomedousuario",
+            'placeholder' => \MapasCulturais\i::__('nomedousuario'),
             'available_for_opportunities' => true
         ),
         'instagram' => array(
@@ -648,7 +702,7 @@ return array(
             'validations' => array(
                 "v::oneOf(v::urlDomain('instagram.com'), v::regex('/^@?([-\w\d\.]+)$/i'))" => \MapasCulturais\i::__("O valor deve ser uma URL ou usuário válido.")
             ),
-            'placeholder' => "nomedousuario",
+            'placeholder' => \MapasCulturais\i::__('nomedousuario'),
         ),
         'linkedin' => array(
             'type' => "socialMedia",
@@ -659,7 +713,7 @@ return array(
             'validations' => array(
                 "v::oneOf(v::urlDomain('linkedin.com'), v::regex('/^@?([\-\w\d\.]+)$/i'))" => \MapasCulturais\i::__("O valor deve ser uma URL ou usuário válido.")
             ),
-            'placeholder' => "nomedousuario",
+            'placeholder' => \MapasCulturais\i::__('nomedousuario'),
             'available_for_opportunities' => true
         ),
       'vimeo' => array(
@@ -671,19 +725,19 @@ return array(
             'serialize' =>function($value){
                 return Utils::parseSocialMediaUser('vimeo.com', $value);
             },
-            'placeholder' => "nomedousuario",
+            'placeholder' => \MapasCulturais\i::__('nomedousuario'),
             'available_for_opportunities' => true
         ),
         'spotify' => array(
             'type' => "socialMedia",
             'label' => \MapasCulturais\i::__('Spotify'),
             'validations' => array(
-                "v::oneOf(v::urlDomain('open.spotify.com'), v::regex('/^@?([-\w\d\.]+)$/i'))" => \MapasCulturais\i::__("O valor deve ser uma URL ou usuário válido.")
+                "v::oneOf(v::urlDomain('open.spotify.com'), v::regex('/^([a-zA-Z0-9]+|(user|artist|playlist|show|album|track):[a-zA-Z0-9]+)$/i'))" => \MapasCulturais\i::__("O valor deve ser uma URL válida do Spotify ou um identificador válido.")
             ),
             'serialize' => function($value) {
                 return Utils::parseSocialMediaUser('open.spotify.com', $value);
             },
-            'placeholder' => "nomedousuario",
+            'placeholder' => \MapasCulturais\i::__('URL ou identificador do Spotify'),
             'available_for_opportunities' => true
         ),
         'youtube' => array(
@@ -695,7 +749,7 @@ return array(
             'serialize' =>function($value){
                 return Utils::parseSocialMediaUser('youtube.com', $value);
             },
-            'placeholder' => "iddocanal",
+            'placeholder' => \MapasCulturais\i::__('iddocanal'),
             'available_for_opportunities' => true
         ),
         'pinterest' => array(
@@ -707,7 +761,7 @@ return array(
             'serialize' =>function($value){
                 return Utils::parseSocialMediaUser('pinterest.com', $value);
             },
-            'placeholder' => "nomedousuario",
+            'placeholder' => \MapasCulturais\i::__('nomedousuario'),
             'available_for_opportunities' => true
         ),
         'tiktok' => array(
@@ -719,8 +773,71 @@ return array(
             'validations' => array(
                 "v::oneOf(v::urlDomain('tiktok.com'), v::regex('/^@?([-\w\d\.]+)$/i'))" => \MapasCulturais\i::__("O valor deve ser uma URL ou usuário válido.")
             ),
-            'placeholder' => "nomedousuario",
+            'placeholder' => \MapasCulturais\i::__('nomedousuario'),
             'available_for_opportunities' => true
+        ),
+        'fediverso' => array(
+            'type' => "socialMedia",
+            'label' => \MapasCulturais\i::__('Fediverso'),
+            'available_for_opportunities' => true,
+            'serialize' => function ($value) {
+                return $value;
+            },
+            'validations' => array(
+                "v::url()" => \MapasCulturais\i::__("A url informada é inválida.")
+            ),
+            'placeholder' => \MapasCulturais\i::__('https://nomedoservidor.com.br/@nomedousuario'),
+        ),
+
+        // === Documentos e Certidões (anexos puros) ===
+        'comprovanteResidenciaAnexo' => array(
+            'private' => true,
+            'label' => \MapasCulturais\i::__('Comprovante de Residência'),
+            'type' => 'file',
+            'file_group' => 'docs-residencia',
+            'available_for_opportunities' => true,
+        ),
+        'comprovanteVinculoTerritorialAnexo' => array(
+            'private' => true,
+            'label' => \MapasCulturais\i::__('Comprovante de Vínculo Territorial'),
+            'type' => 'file',
+            'file_group' => 'docs-vinculo-territorial',
+            'available_for_opportunities' => true,
+        ),
+        'curriculoAnexo' => array(
+            'private' => true,
+            'label' => \MapasCulturais\i::__('Currículo'),
+            'type' => 'file',
+            'file_group' => 'docs-curriculo',
+            'available_for_opportunities' => true,
+        ),
+        'portfolioAnexo' => array(
+            'private' => true,
+            'label' => \MapasCulturais\i::__('Portfólio'),
+            'type' => 'file',
+            'file_group' => 'docs-portfolio',
+            'available_for_opportunities' => true,
+        ),
+        'certidaoFiscalAnexo' => array(
+            'private' => true,
+            'label' => \MapasCulturais\i::__('Certidão de Regularidade Fiscal'),
+            'type' => 'file',
+            'file_group' => 'docs-certidao-fiscal',
+            'available_for_opportunities' => true,
+        ),
+        'certidaoTrabalhistaAnexo' => array(
+            'private' => true,
+            'label' => \MapasCulturais\i::__('Certidão de Regularidade Trabalhista'),
+            'type' => 'file',
+            'file_group' => 'docs-certidao-trabalhista',
+            'available_for_opportunities' => true,
+        ),
+        'certidaoPrestacaoContasAnexo' => array(
+            'private' => true,
+            'label' => \MapasCulturais\i::__('Certidão de Prestação de Contas'),
+            'type' => 'file',
+            'file_group' => 'docs-certidao-contas',
+            'available_for_opportunities' => true,
         ),
     ),
     'items' => array(

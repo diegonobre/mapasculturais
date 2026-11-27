@@ -2,9 +2,10 @@
 
 namespace MapasCulturais\Entities;
 
-use Doctrine\ORM\Mapping as ORM;
-use \MapasCulturais\App;
 use \MapasCulturais\i;
+use \MapasCulturais\App;
+use MapasCulturais\Utils;
+use Doctrine\ORM\Mapping as ORM;
 
 /**
  * File
@@ -12,11 +13,12 @@ use \MapasCulturais\i;
  * @property-read int $id File Id
  * @property-read string $md5 File MD5
  * @property-read string $mimeType File Mime Type
- * @property-read string $name File name
- * @property-read string $group File Group (gallery|avatar|download|etc.)
- * @property-read \MapasCulturais\Entity $owner File Owner
+ * @property string $name File name
+ * @property string $description File description
+ * @property string $group File Group (gallery|avatar|download|etc.)
+ * @property \MapasCulturais\Entity $owner File Owner
  * @property-read \DateTime $createTimestamp File Create Timestamp
- * @property-read \MapasCulturais\Entity $owner The Owner of this File
+ * @property \MapasCulturais\Entity $owner The Owner of this File
  * 
  * @property bool $private Is this file private?
  *
@@ -34,6 +36,7 @@ use \MapasCulturais\i;
  * @ORM\InheritanceType("SINGLE_TABLE")
  * @ORM\DiscriminatorColumn(name="object_type", type="object_type")
  * @ORM\DiscriminatorMap({
+        "MapasCulturais\Entities\ChatMessage"                   = "\MapasCulturais\Entities\ChatMessageFile",
         "MapasCulturais\Entities\Opportunity"                   = "\MapasCulturais\Entities\OpportunityFile",
         "MapasCulturais\Entities\Project"                       = "\MapasCulturais\Entities\ProjectFile",
         "MapasCulturais\Entities\Event"                         = "\MapasCulturais\Entities\EventFile",
@@ -43,7 +46,10 @@ use \MapasCulturais\i;
         "MapasCulturais\Entities\Registration"                  = "\MapasCulturais\Entities\RegistrationFile",
         "MapasCulturais\Entities\RegistrationFileConfiguration" = "\MapasCulturais\Entities\RegistrationFileConfigurationFile",
         "MapasCulturais\Entities\Subsite"                       = "\MapasCulturais\Entities\SubsiteFile",
-        "MapasCulturais\Entities\User"                          = "\MapasCulturais\Entities\UserFile"
+        "MapasCulturais\Entities\User"                          = "\MapasCulturais\Entities\UserFile",
+        "MapasCulturais\Entities\RegistrationEvaluation"        = "\MapasCulturais\Entities\RegistrationEvaluationFile",
+        "OpportunityWorkplan\Entities\Delivery"                 = "\OpportunityWorkplan\Entities\DeliveryFile",
+
    })
  */
 abstract class File extends \MapasCulturais\Entity
@@ -146,7 +152,8 @@ abstract class File extends \MapasCulturais\Entity
         $this->tmpFile = $tmp_file;
         $this->md5 = md5_file($tmp_file['tmp_name']);
         $this->name = $tmp_file['name'];
-        $this->mimeType = $tmp_file['type'];
+        
+        $this->mimeType = Utils::getMimeType($tmp_file['tmp_name']); 
 
         if(isset($tmp_file['parent'])){
             $this->parent = $tmp_file['parent'];
@@ -157,9 +164,13 @@ abstract class File extends \MapasCulturais\Entity
 
     static function getValidations() {
         $app = App::i();
+        
+        $not_allowed_mime_types = $app->config['app.not_allowed_mime_types'];
+        $pattern = '#(?:^|[\/\-\.+])(?:' . $not_allowed_mime_types . ')(?:$|[\/\-\.+])#i';
+
         $validations = [
             'mimeType' => [
-                'v::not(v::regex("#.php$#"))' => i::__('Tipo de arquivo não permitido')
+                'v::not(v::regex("'.$pattern.'"))' => i::__('Tipo de arquivo não permitido')
             ]
         ];
 
@@ -289,15 +300,17 @@ abstract class File extends \MapasCulturais\Entity
 
         if($files){
             foreach($files as $file){
-                $registeredGroup = $app->getRegisteredFileGroup($file->owner->controllerId, $file->group);
+                $group_key = trim($file->group);
+                $registeredGroup = $app->getRegisteredFileGroup($file->owner->controllerId, $group_key);
 
-                if($registeredGroup && $registeredGroup->unique || $file->group === 'zipArchive' || strpos($file->group, 'rfc_') === 0){
-                    $result[trim($file->group)] = $file;
+                if($registeredGroup && $registeredGroup->unique || strpos($group_key, 'rfc_') === 0){
+                    $last_file = $result[$group_key] ?? null;
+                    $result[$group_key] = (!$last_file || $file->id > $last_file->id) ? $file : $last_file;
                 }else{
-                    if(!key_exists($file->group, $result))
-                        $result[trim($file->group)] = [];
+                    if(!key_exists($group_key, $result))
+                        $result[$group_key] = [];
 
-                    $result[trim($file->group)][] = $file;
+                    $result[$group_key][] = $file;
                 }
             }
         }

@@ -14,9 +14,10 @@ $this->import('
     <template v-if="modalOpen">
         <div class="modal__header">
             <span v-if="title" class="modal__title">{{title}}</span>
+            <h6 v-if="subtitle">{{subtitle}}</h6>
             <button v-if="closeButton" class="modal__close" @click="close()"> <mc-icon name="close"></mc-icon> </button>
         </div>
-        <div class="modal__content">
+        <div class="modal__content scrollbar">
             <slot :close="close" :open="open" :isOpen="modalOpen" :toggle="toggle" :loading="loading"></slot>
         </div>
         <div class="modal__action">
@@ -27,5 +28,5 @@ $this->import('
 </vue-final-modal>
 
 <slot name="button" :close="close" :open="open" :toggle="toggle" :loading="loading">
-    <button :class="['button',buttonClasses]" @click="open()">{{buttonLabel || '<?= i::__('Defina a propriedade `buttonLabel` do componente modal') ?>'}}</button>
+    <button v-if="buttonLabel" :class="['button', buttonClasses]" @click="open()">{{buttonLabel}}</button>
 </slot>

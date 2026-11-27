@@ -2,6 +2,8 @@
 namespace MapasCulturais\Storage;
 
 use MapasCulturais\App;
+use MapasCulturais\Exceptions\SaveFileError;
+use MapasCulturais\i;
 
 /**
  * Store the files in the filesystem.
@@ -50,8 +52,12 @@ class FileSystem extends \MapasCulturais\Storage{
         if($file->tmpFile['error'] === UPLOAD_ERR_OK){
             $filename = $this->getPath($file);
 
-            if(!is_dir(dirname($filename)))
-                mkdir (dirname($filename), 0755, true);
+            if(!is_dir(dirname($filename))){
+                $success = @mkdir(dirname($filename), 0755, true);
+                if(!$success) {
+                    throw new SaveFileError(i::__('Não foi possível salvar o arquivo'));
+                }
+            }
 
             // if filename exists, add a number before the last dot
             if(file_exists($filename)){
@@ -64,16 +70,11 @@ class FileSystem extends \MapasCulturais\Storage{
                 }
             }
 
-            /** Add verification to check if the file is really saved in storage */
-            if (is_uploaded_file($file->tmpFile['tmp_name'])) {
-                if (!move_uploaded_file($file->tmpFile['tmp_name'], $filename)) {
-                    throw new \MapasCulturais\Exceptions\FileUploadError($file->getGroup(), 500);
-                }
-            } else {
-                rename($file->tmpFile['tmp_name'], $filename);
+            $success = @rename($file->tmpFile['tmp_name'], $filename);
+            if(!$success) {
+                throw new SaveFileError(i::__('Não foi possível salvar o arquivo'));
             }
-
-            chmod($filename, 0666);
+            $success = @chmod($filename, 0666);
         }else{
             return false;
         }
@@ -194,48 +195,6 @@ class FileSystem extends \MapasCulturais\Storage{
             $result = $file->private ? $this->config['private_dir'] . $relative_path : $this->config['dir'] . $relative_path;
         
         return str_replace('\\', '-', $result);
-    }
-
-
-    public function createZipOfEntityFiles($entity, $fileName = null) {
-        if($file = $entity->getFile('zipArchive')){
-            $file->delete(true);
-        }
-        \MapasCulturais\App::i()->em->refresh($entity);
-        $files = array_map(function($item){
-            if (is_array($item)) {
-                $item = $item[0];
-            }
-            return '"'.$this->getPath($item).'"';
-        }, $entity->files);
-
-
-        $strFiles = implode(' ', $files);
-
-        $tmpName = sys_get_temp_dir() . '/' . $entity->id . '-' . uniqid() . '.zip';
-
-        if(!$fileName){
-            $fileName = $entity->id . '.zip';
-        }
-
-        if(exec('zip -j ' . $tmpName . ' ' . $strFiles) && file_exists($tmpName)){
-            
-            $file_class = $entity->getFileClassName();
-            $newFile = new $file_class ([
-                'name' => $fileName,
-                'type' => 'application/zip',
-                'tmp_name' => $tmpName,
-                'error' => 0,
-                'size' => filesize($tmpName)
-            ]);
-            $newFile->owner = $entity;
-            $newFile->group = 'zipArchive';
-            $newFile->save(true);
-            return $newFile;
-        }else{
-            //exception: can't create zipfile
-            return null;
-        }
     }
 
     protected function _moveToPublicFolder(\MapasCulturais\Entities\File $file) {

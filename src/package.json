@@ -1,18 +1,25 @@
 {
     "name": "mapasculturais",
     "private": true,
+    "pnpm": {
+        "onlyBuiltDependencies": [
+            "@parcel/watcher",
+            "@scarf/scarf",
+            "vue-demi"
+        ]
+    },
     "scripts": {
         "dev": "pnpm run --parallel --recursive dev",
         "build": "pnpm run --parallel --recursive build",
         "watch": "pnpm run --parallel --recursive watch"
     },
     "devDependencies": {
-        "fast-glob": "^3.3.2",
+        "fast-glob": "^3.3.3",
         "laravel-mix": "^6.0.49",
-        "postcss": "^8.4.49",
+        "postcss": "^8.5.8",
         "resolve-url-loader": "^5.0.0",
-        "sass": "^1.83.0",
+        "sass": "^1.98.0",
         "sass-loader": "^12.6.0",
-        "webpack": "^5.97.1"
+        "webpack": "^5.105.4"
     }
 }

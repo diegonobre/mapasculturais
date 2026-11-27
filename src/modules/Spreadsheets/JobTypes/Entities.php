@@ -1,18 +1,19 @@
 <?php
 namespace Spreadsheets\JobTypes;
 
+use MapasCulturais\i;
+use MapasCulturais\App;
 use MapasCulturais\ApiQuery;
+use MapasCulturais\Entities\Job;
+use Spreadsheets\SpreadsheetJob;
+use MapasCulturais\Entities\Seal;
+use MapasCulturais\Entities\User;
 use MapasCulturais\Entities\Agent;
 use MapasCulturais\Entities\Event;
-use MapasCulturais\Entities\Job;
-use MapasCulturais\Entities\Opportunity;
-use MapasCulturais\Entities\Project;
-use MapasCulturais\Entities\Seal;
 use MapasCulturais\Entities\Space;
+use MapasCulturais\Entities\Project;
 use MapasCulturais\Entities\Subsite;
-use MapasCulturais\Entities\User;
-use MapasCulturais\i;
-use Spreadsheets\SpreadsheetJob;
+use MapasCulturais\Entities\Opportunity;
 
 class Entities extends SpreadsheetJob
 {
@@ -36,20 +37,28 @@ class Entities extends SpreadsheetJob
     protected function _getHeader(Job $job) : array {
         $header = [];
 
+        $app = App::i();
         $entity_class_name = $job->entityClassName;
         
         $query = $job->query;
         $properties = explode(',', $query['@select']);
 
+        // Taxonomy slugs (e.g. agent "area" and "funcao") are exported as their own
+        // columns and labeled with the registered taxonomy name/description.
+        $taxonomy_labels = [];
+        foreach($app->getRegisteredTaxonomies() as $slug => $taxonomy) {
+            $taxonomy_labels[$slug] = $taxonomy->name ?: $taxonomy->description ?: $slug;
+        }
+
         foreach($properties as $property) {
             if($property == 'terms') {
-                $header['area'] = i::__('Área de interesse');
+                $header['area'] = $taxonomy_labels['area'] ?? i::__('Área de interesse');
                 $header['tag'] = i::__('Tags');
                 continue;
             }
 
-            if($property == 'area') {
-                $header['area'] = i::__('Área de interesse');
+            if($property == 'tag') {
+                $header['tag'] = i::__('Tags');
                 continue;
             }
 
@@ -58,7 +67,17 @@ class Entities extends SpreadsheetJob
                 continue;
             }
 
+            if($property == 'seals') {
+                $header['seals'] = i::__('Selos');
+                continue;
+            }
+
             if($property == 'files.avatar') {
+                continue;
+            }
+
+            if(isset($taxonomy_labels[$property])) {
+                $header[$property] = $taxonomy_labels[$property];
                 continue;
             }
 
@@ -70,26 +89,50 @@ class Entities extends SpreadsheetJob
 
     protected function _getBatch(Job $job) : array {
         $entity_class_name = $job->entityClassName;
+        $app = App::i();
 
-        $query = $job->query;
-        $query['@limit'] = $this->limit;
-        $query['@page'] = $this->page;
+        $jobQuery = $job->query;
+        $jobQuery['@limit'] = $this->limit;
+        $jobQuery['@page'] = $this->page;
 
-        $query = new ApiQuery($entity_class_name, $query);
+        $taxonomies = array_keys($app->getRegisteredTaxonomies());
+
+        if(isset($jobQuery['@select'])) {
+            $select = [];
+            if($props = explode(',', $jobQuery['@select'])) {
+                $select = $props;
+                foreach($props as $prop) {
+                    if(in_array($prop, $taxonomies) && !in_array('terms', $props)) {
+                        $select[] = 'terms';
+                    }
+                }
+
+                $jobQuery['@select'] = implode(',', $select);
+            }
+        }
+
+        $query = new ApiQuery($entity_class_name, $jobQuery);
         $result = $query->getFindResult();
 
         foreach($result as &$entity) {
             $terms = $entity['terms'] ?? null;
-
             $entity['type'] = isset($entity['type']) ? $entity['type']->name : '';
-            $entity['area'] = isset($terms['area']) ? implode(', ', $terms['area']) : null;
-            $entity['tag'] = isset($terms['tag']) ? implode(', ', $terms['tag']) : null;
+
+            // Flatten the terms relation into one column per registered taxonomy
+            // (area, tag, funcao, linguagem, segmento, ...).
+            if(is_array($terms)) {
+                foreach($taxonomies as $taxonomy_slug) {
+                    $entity[$taxonomy_slug] = isset($terms[$taxonomy_slug]) ? implode(', ', $terms[$taxonomy_slug]) : null;
+                }
+            }
+
             if(isset($entity['seals']) && $entity['seals']) {
                 $sealNames = array_map(function($seal) {
                     return $seal['name'];
                 }, $entity['seals']);
                 $entity['seals'] = implode(', ', $sealNames);
             }
+            $entity['longDescription'] = $this->cleanTextForExport($entity['longDescription'] ?? '');
 
             unset($entity['terms']);
             unset($entity['@entityType']);

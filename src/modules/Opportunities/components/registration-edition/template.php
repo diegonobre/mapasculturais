@@ -18,21 +18,22 @@ $this->import('
     registration-related-space
     registration-related-project
     registration-steps
+    registration-workplan-form
+    request-agent-avatar
 ');
 
 ?>
 
-<div class="registration__content">
-    <div v-if="steps.length > 1" class="registration__steps">
+<div class="registration__content" :class="{ 'status--20': entity.opportunity.status === -20 }">
+    <div v-if="steps.length > 1" class="registration__steps" :class="{ 'status--20': entity.opportunity.status === -20 }">
         <registration-steps :steps="steps" v-model:step-index="stepIndex"></registration-steps>
     </div>
 
     <mc-container>
         <main class="grid-12">
             <registration-info :registration="entity" classes="col-12"></registration-info>
-
             <section class="section">
-                <h2 class="section__title" id="main-info">
+                <h2 v-if="entity.opportunity.status !== -20" class="section__title" id="main-info">
                     {{ stepIndex + 1 }}. {{ step?.name || text('Informações básicas') }}
                 </h2>
                 <registration-autosave-notification :registration="entity"></registration-autosave-notification>
@@ -59,10 +60,15 @@ $this->import('
                             </div>
                         </div>
                     </div>
-                    <div class="card collective" v-if="!preview && entity.agentRelations.coletivo?.length > 0">
-                        <div class="card__content" v-for="agentCollective in entity.agentRelations.coletivo">
+                    <div class="card collective" v-if="!preview && collectiveRelations.length > 0">
+                        <div class="card__content" v-for="agentCollective in collectiveRelations">
                             <div class="collective">
-                                <mc-avatar :entity="agentCollective.agent" size="small"></mc-avatar>
+                                <mc-avatar v-if="!collectiveAvatarRequired" :entity="agentCollective.agent" size="small"></mc-avatar>
+                                <request-agent-avatar
+                                    v-if="collectiveAvatarRequired"
+                                    :entity="entity"
+                                    :agent="agentCollective.agent"
+                                    error-key="agent_coletivo_avatar"></request-agent-avatar>
                                 <div class="collective__content">
                                     <div class="collective__content--title">
                                         <h3 class="card__title">
@@ -71,6 +77,9 @@ $this->import('
                                         <div class="collective__name">
                                             {{agentCollective.agent.name}}
                                         </div>
+                                    </div>
+                                    <div v-if="collectiveAvatarRequired" class="card__mandatory">
+                                        <div class="obrigatory"> <?= i::__('*obrigatório') ?> </div>
                                     </div>
                                 </div>
                             </div>
@@ -81,6 +90,9 @@ $this->import('
                         <h3 class="card__title">
                             <?= i::__('Vai concorrer às cotas?') ?>
                         </h3>
+                        <div class="card__mandatory">
+                            <div class="obrigatory"> <?= i::__('*obrigatório') ?> </div>
+                        </div>
 
                         <div class="card__content">
                             <entity-field :entity="entity" prop="appliedForQuota" :hide-label="true"></entity-field>
@@ -94,12 +106,16 @@ $this->import('
             </section>
 
             <section class="section" v-if="preview || !entity.opportunity.proponentAgentRelation?.[entity.proponentType] || (entity.agentRelations.coletivo && entity.opportunity.proponentAgentRelation?.[entity.proponentType])">
-                <registration-form :registration="entity" :step="step"></registration-form>
+                <registration-form :registration="entity" :step="step" :is-last-step="isLastStep"></registration-form>
+            </section>
+
+            <section class="section" v-if="hasWorkplan && isLastStep && entity.opportunity.isReportingPhase">
+                <registration-workplan-form editable :registration="entity"></registration-workplan-form>
             </section>
         </main>
 
         <aside>
-            <registration-actions :registration="entity" :steps="steps" v-model:step-index="stepIndex"></registration-actions>
+            <registration-actions :registration="entity" :steps="steps" v-model:step-index="stepIndex" :editable-fields="editableFields"></registration-actions>
         </aside>
     </mc-container>
 </div>

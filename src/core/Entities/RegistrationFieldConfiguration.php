@@ -8,6 +8,25 @@ use MapasCulturais\Traits;
 
 /**
  * RegistrationFieldConfiguration
+ * 
+ * @property Opportunity $owner
+ * @property RegistrationStep $step
+ * @property-read string $fieldName;
+ * @property string $title
+ * @property string $description
+ * @property int $maxSize
+ * @property bool $required
+ * @property string $fieldType
+ * @property int $displayOrder
+ * @property array $fieldOptions
+ * @property object $config
+ * @property bool $conditional
+ * @property string $conditionalField
+ * @property string $conditionalValue
+ 
+ * @property array $categories
+ * @property array $registrationRanges
+ * @property array $proponentTypes
  *
  * @ORM\Table(name="registration_field_configuration")
  * @ORM\Entity
@@ -61,7 +80,7 @@ class RegistrationFieldConfiguration extends \MapasCulturais\Entity {
     protected $description;
 
     /**
-     * @var string
+     * @var int
      *
      * @ORM\Column(name="max_size", type="integer", nullable=true)
      */
@@ -96,28 +115,28 @@ class RegistrationFieldConfiguration extends \MapasCulturais\Entity {
     protected $displayOrder = 255;
 
     /**
-     * @var string
+     * @var array
      *
      * @ORM\Column(name="field_options", type="json", nullable=false)
      */
     protected $fieldOptions = [];
 
     /**
-     * @var string
+     * @var object
      *
      * @ORM\Column(name="config", type="json")
      */
-    protected $config = [];
+    protected $config;
 
     /**
-     * @var string
+     * @var bool
      *
      * @ORM\Column(name="conditional", type="boolean", nullable=true)
      */
     protected $conditional;
 
     /**
-     * @var boolean
+     * @var string
      *
      * @ORM\Column(name="conditional_field", type="string", nullable=true)
      */
@@ -143,6 +162,12 @@ class RegistrationFieldConfiguration extends \MapasCulturais\Entity {
       * @ORM\Column(name="proponent_types", type="json", nullable=true)
       */
     protected $proponentTypes = [];
+
+    public function __construct()
+    {
+        $this->config = [];
+        parent::__construct();
+    }
 
     static function getValidations() {
         $app = App::i();
@@ -230,7 +255,7 @@ class RegistrationFieldConfiguration extends \MapasCulturais\Entity {
     public function getFieldName(){
         return 'field_' . $this->id;
     }
-
+    
     /**
      *
      * @return \MapasCulturais\Definitions\RegistrationFieldType
@@ -247,10 +272,10 @@ class RegistrationFieldConfiguration extends \MapasCulturais\Entity {
         'title' => $this->title,
         'description' => $this->description,
         'maxSize' => $this->maxSize,
-        'required' => $this->required,
+        'required' => filter_var($this->required, FILTER_VALIDATE_BOOLEAN),
         'fieldType' => $this->fieldType,
         'fieldOptions' => $this->fieldOptions,
-        'config' => $this->config,
+        'config' => $this->config ?: [],
         'categories' => $this->categories ?: [],
         'fieldName' => $this->getFieldName(),
         'displayOrder' => $this->displayOrder,
@@ -259,7 +284,7 @@ class RegistrationFieldConfiguration extends \MapasCulturais\Entity {
         'conditionalValue' => $this->conditionalValue,
         'registrationRanges' => $this->registrationRanges ?: [],
         'proponentTypes' => $this->proponentTypes ?: [],
-        'step' => $this->step ?? null,
+        'step' => $this->step ? $this->step->simplify('id,name,displayOrder,metadata') : null,
         ];
 
         $app = App::i();

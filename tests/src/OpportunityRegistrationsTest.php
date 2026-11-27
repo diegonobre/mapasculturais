@@ -1,0 +1,785 @@
+<?php
+
+namespace Test;
+
+use MapasCulturais\API;
+use MapasCulturais\App;
+use MapasCulturais\ApiQuery;
+use Opportunities\Module as OpportunitiesModule;
+use Tests\Abstract\TestCase;
+use Tests\Traits\UserDirector;
+use Tests\Enums\ProponentTypes;
+use Tests\Traits\AgentDirector;
+use Tests\Traits\RequestFactory;
+use Tests\Traits\OpportunityBuilder;
+use Tests\Builders\PhasePeriods\Open;
+use Tests\Builders\PhasePeriods\Past;
+use Tests\Builders\PhasePeriods\After;
+use Tests\Traits\RegistrationDirector;
+use MapasCulturais\Entities\Opportunity;
+use MapasCulturais\Entities\Registration;
+
+class OpportunityRegistrationsTest extends TestCase
+{
+    use OpportunityBuilder,
+        RegistrationDirector,
+        AgentDirector,
+        UserDirector,
+        RequestFactory;
+
+
+    function testApproveCollectiveRegistrationWithoutAgentRelationAndWithoutSealDoesNotFail() {
+        $app = App::i();
+        $admin = $this->userDirector->createUser('admin');
+        $this->login($admin);
+
+        /** @var Opportunity */
+        $opportunity = $this->opportunityBuilder
+                            ->reset(owner: $admin->profile, owner_entity: $admin->profile)
+                            ->fillRequiredProperties()
+                            ->setProponentTypes()
+                            ->save()
+                            ->firstPhase()
+                                ->setRegistrationPeriod(new Open)
+                                ->done()
+                            ->save()
+                            ->refresh()
+                            ->getInstance();
+
+        $app->disableAccessControl();
+        $opportunity->publishRegistrations();
+        $app->enableAccessControl();
+
+        $registration = $this->registrationDirector->createSentRegistrations(
+            $opportunity,
+            number_of_registrations: 1,
+            proponent_type: ProponentTypes::COLETIVO->value
+        )[0];
+
+        $registration->opportunity->proponentSeals = (object) [
+            ProponentTypes::COLETIVO->value => []
+        ];
+        $registration->opportunity->proponentAgentRelation = (object) [
+            ProponentTypes::COLETIVO->value => false,
+            ProponentTypes::PESSOA_JURIDICA->value => false,
+        ];
+
+        $this->assertTrue($opportunity->publishedRegistrations);
+        $this->assertIsObject($registration->opportunity->proponentSeals);
+        $this->assertEquals([ProponentTypes::COLETIVO->value => []], (array) $registration->opportunity->proponentSeals);
+        $this->assertCount(0, $registration->getAgentRelations());
+
+        $registration->setStatusToApproved(true);
+
+        $this->assertEquals(Registration::STATUS_APPROVED, $registration->status);
+    }
+
+
+    function testApplySealIgnoresMissingAgent() {
+        /** @var OpportunitiesModule $module */
+        $module = App::i()->modules['Opportunities'];
+
+        $module->applySeal(null, []);
+
+        $this->assertTrue(true);
+    }
+
+    function testApplySealIgnoresNullSealIds() {
+        /** @var OpportunitiesModule $module */
+        $module = App::i()->modules['Opportunities'];
+
+        $module->applySeal(null, null);
+
+        $this->assertTrue(true);
+    }
+
+    function testRemoveSealsIgnoresNullOrEmptySealIds() {
+        /** @var OpportunitiesModule $module */
+        $module = App::i()->modules['Opportunities'];
+        $app = App::i();
+
+        $module->removeSeals($app, [], null);
+        $module->removeSeals($app, [], []);
+
+        $this->assertTrue(true);
+    }
+
+    /**
+     * Publicar resultado não deve falhar quando a inscrição tem proponentType
+     * ausente em proponentSeals.
+     */
+    function testPublishRegistrationsWithMissingProponentSealKeyDoesNotFail() {
+        $app = App::i();
+        $admin = $this->userDirector->createUser('admin');
+        $this->login($admin);
+
+        /** @var Opportunity */
+        $opportunity = $this->opportunityBuilder
+                            ->reset(owner: $admin->profile, owner_entity: $admin->profile)
+                            ->fillRequiredProperties()
+                            ->setProponentTypes()
+                            ->save()
+                            ->firstPhase()
+                                ->setRegistrationPeriod(new Open)
+                                ->done()
+                            ->save()
+                            ->refresh()
+                            ->getInstance();
+
+        $registration = $this->registrationDirector->createSentRegistrations(
+            $opportunity,
+            number_of_registrations: 1,
+            proponent_type: ProponentTypes::COLETIVO->value
+        )[0];
+
+        $registration->setStatusToApproved(true);
+
+        // Selos só para Pessoa Física — Coletivo não tem chave
+        $opportunity->proponentSeals = (object) [
+            ProponentTypes::PESSOA_FISICA->value => []
+        ];
+        $opportunity->save(true);
+
+        $app->disableAccessControl();
+        $opportunity->publishRegistrations();
+        $app->enableAccessControl();
+
+        $this->assertTrue($opportunity->publishedRegistrations);
+        $this->assertEquals(Registration::STATUS_APPROVED, $registration->refreshed()->status);
+    }
+
+    /**
+     * Despublicar resultado não deve falhar quando a inscrição tem proponentType
+     * ausente em proponentSeals.
+     */
+    function testUnpublishRegistrationsWithMissingProponentSealKeyDoesNotFail() {
+        $app = App::i();
+        $admin = $this->userDirector->createUser('admin');
+        $this->login($admin);
+
+        /** @var Opportunity */
+        $opportunity = $this->opportunityBuilder
+                            ->reset(owner: $admin->profile, owner_entity: $admin->profile)
+                            ->fillRequiredProperties()
+                            ->setProponentTypes()
+                            ->save()
+                            ->firstPhase()
+                                ->setRegistrationPeriod(new Open)
+                                ->done()
+                            ->save()
+                            ->refresh()
+                            ->getInstance();
+
+        $registration = $this->registrationDirector->createSentRegistrations(
+            $opportunity,
+            number_of_registrations: 1,
+            proponent_type: ProponentTypes::COLETIVO->value
+        )[0];
+
+        $registration->setStatusToApproved(true);
+
+        $opportunity->proponentSeals = (object) [
+            ProponentTypes::PESSOA_FISICA->value => []
+        ];
+        $opportunity->save(true);
+
+        $app->disableAccessControl();
+        $opportunity->publishRegistrations();
+        // publishRegistrations faz em->clear(); precisa recarregar antes do unpublish
+        $opportunity = $app->repo('Opportunity')->find($opportunity->id);
+        $opportunity->unPublishRegistrations();
+        $app->enableAccessControl();
+
+        $this->assertFalse($opportunity->publishedRegistrations);
+        $this->assertEquals(Registration::STATUS_APPROVED, $registration->refreshed()->status);
+    }
+
+    /**
+     * Mudança de status após publicação não deve falhar com chave ausente em proponentSeals.
+     */
+    function testStatusChangeWithMissingProponentSealKeyDoesNotFail() {
+        $app = App::i();
+        $admin = $this->userDirector->createUser('admin');
+        $this->login($admin);
+
+        /** @var Opportunity */
+        $opportunity = $this->opportunityBuilder
+                            ->reset(owner: $admin->profile, owner_entity: $admin->profile)
+                            ->fillRequiredProperties()
+                            ->setProponentTypes()
+                            ->save()
+                            ->firstPhase()
+                                ->setRegistrationPeriod(new Open)
+                                ->done()
+                            ->save()
+                            ->refresh()
+                            ->getInstance();
+
+        $app->disableAccessControl();
+        $opportunity->publishRegistrations();
+        $app->enableAccessControl();
+
+        $registration = $this->registrationDirector->createSentRegistrations(
+            $opportunity,
+            number_of_registrations: 1,
+            proponent_type: ProponentTypes::COLETIVO->value
+        )[0];
+
+        $opportunity->proponentSeals = (object) [
+            ProponentTypes::PESSOA_FISICA->value => []
+        ];
+        $opportunity->save(true);
+
+        $registration->setStatusToApproved(true);
+        $registration->setStatusToNotApproved(true);
+
+        $this->assertEquals(Registration::STATUS_NOTAPPROVED, $registration->status);
+    }
+
+    /**
+     * Mudança de status não deve falhar quando a categoria da inscrição
+     * não existe em categorySeals.
+     */
+    function testStatusChangeWithMissingCategorySealKeyDoesNotFail() {
+        $app = App::i();
+        $admin = $this->userDirector->createUser('admin');
+        $this->login($admin);
+
+        /** @var Opportunity */
+        $opportunity = $this->opportunityBuilder
+                            ->reset(owner: $admin->profile, owner_entity: $admin->profile)
+                            ->fillRequiredProperties()
+                            ->addProponentType(ProponentTypes::PESSOA_FISICA)
+                            ->addCategory('Literatura')
+                            ->addCategory('Música')
+                            ->save()
+                            ->firstPhase()
+                                ->setRegistrationPeriod(new Open)
+                                ->done()
+                            ->save()
+                            ->refresh()
+                            ->getInstance();
+
+        $app->disableAccessControl();
+        $opportunity->publishRegistrations();
+        $app->enableAccessControl();
+
+        $registration = $this->registrationDirector->createSentRegistrations(
+            $opportunity,
+            number_of_registrations: 1,
+            category: 'Literatura',
+            proponent_type: ProponentTypes::PESSOA_FISICA->value
+        )[0];
+
+        // proponentSeals presente (senão o hook de status retorna cedo);
+        // categorySeals só tem Música — Literatura está ausente
+        $opportunity->proponentSeals = (object) [
+            ProponentTypes::PESSOA_FISICA->value => []
+        ];
+        $opportunity->categorySeals = (object) [
+            'Música' => []
+        ];
+        $opportunity->save(true);
+
+        $registration->setStatusToApproved(true);
+        $registration->setStatusToNotApproved(true);
+
+        $this->assertEquals(Registration::STATUS_NOTAPPROVED, $registration->status);
+    }
+
+
+    function testRequiredOneLevelConditionalField() {
+        $admin = $this->userDirector->createUser('admin');
+        $this->login($admin);
+
+        /** @var Opportunity */
+        $opportunity = $this->opportunityBuilder
+                            ->reset(owner: $admin->profile, owner_entity: $admin->profile)
+                            ->fillRequiredProperties()
+                            ->save()
+                            ->firstPhase()
+                                ->setRegistrationPeriod(new Open)
+                                ->createStep('etapa')
+                                ->createField('cor', 'select', required:true, options:['Azul', 'Vermelho', 'Amarelo'])
+                                ->createField('tom-de-azul', 'text', required:true, field_condition:'cor:Azul')
+                                ->createField('tom-de-vermelho', 'text', required:true, field_condition:'cor:Vermelho')
+                                ->done()
+                            ->save()
+                            ->refresh()
+                            ->getInstance();
+        
+        $field_cor = $this->opportunityBuilder->getFieldName('cor');
+        $field_tom_de_azul = $this->opportunityBuilder->getFieldName('tom-de-azul');
+        $field_tom_de_vermelho = $this->opportunityBuilder->getFieldName('tom-de-vermelho');
+
+        $registrations = $this->registrationDirector->createDraftRegistrations(
+            $opportunity,
+            number_of_registrations: 3
+        );
+
+        
+        list($azul, $vermelho, $amarelo) = $registrations;
+        
+        $amarelo->$field_cor = 'Amarelo';
+        $this->assertEmpty($amarelo->validationErrors, 
+            'Certificando que um CAMPO OBRIGATÓRIO NÃO PREENCHIDO, quando condicionado a outro campo, NÃO causa erro de validação quando a condição para sua exibição NÃO foi ATENDIDA');
+        
+        $azul->$field_cor = 'Azul';
+        $this->assertArrayHasKey($field_tom_de_azul, $azul->validationErrors, 
+            'Certificando que um CAMPO OBRIGATÓRIO NÃO PREENCHIDO, quando condicionado a outro campo, CAUSA erro de validação quando a condição para sua exibição FOI ATENDIDA');
+
+        $this->assertCount(1, $azul->validationErrors, 
+            'Certificando que há o número certo de campos com erro de validação quando um CAMPO OBRIGATÓRIO NÃO PREENCHIDO condicionado a outro campo CAUSA erro de validação quando a condição para sua exibição FOI ATENDIDA');
+
+        $vermelho->$field_cor = 'Vermelho';
+        $vermelho->$field_tom_de_vermelho = 'Escuro';
+        $this->assertEmpty($amarelo->validationErrors, 
+            'Certificando que um CAMPO OBRIGATÓRIO PREENCHIDO, quando condicionado a outro campo, NÃO causa erro de validação quando a condição para sua exibição FOI ATENDIDA');
+
+    }
+
+    function testRequiredTwoLevelsConditionalField() {
+        $admin = $this->userDirector->createUser('admin');
+        $this->login($admin);
+
+        /** @var Opportunity */
+        $opportunity = $this->opportunityBuilder
+                            ->reset(owner: $admin->profile, owner_entity: $admin->profile)
+                            ->fillRequiredProperties()
+                            ->save()
+                            ->firstPhase()
+                                ->setRegistrationPeriod(new Open)
+                                ->createStep('etapa')
+                                ->createField('cor', 'select', required:true, options:['Azul', 'Vermelho', 'Amarelo'])
+                                ->createField('tom-de-vermelho', 'text', required:true, field_condition:'cor:Vermelho')
+                                ->createField('pq-vermelho-escuro', 'text', required:true, field_condition:'tom-de-vermelho:Escuro')
+                                ->done()
+                            ->save()
+                            ->refresh()
+                            ->getInstance();
+        
+        $field_cor = $this->opportunityBuilder->getFieldName('cor');
+        $field_tom_de_vermelho = $this->opportunityBuilder->getFieldName('tom-de-vermelho');
+        $field_pq_vermelho_escuro = $this->opportunityBuilder->getFieldName('pq-vermelho-escuro');
+
+        $registrations = $this->registrationDirector->createDraftRegistrations(
+            $opportunity,
+            number_of_registrations: 1
+        );
+        
+        $registration = $registrations[0];
+        
+        $registration->$field_cor = 'Vermelho';
+        $registration->$field_tom_de_vermelho = 'Escuro';
+
+        $this->assertArrayHasKey($field_pq_vermelho_escuro, $registration->validationErrors, 
+            'Certificando que um CAMPO OBRIGATÓRIO NÃO PREENCHIDO, quando condicionado a outro campo condicionado, CAUSA erro de validação quando a condição para sua exibição FOI ATENDIDA');
+
+        $this->assertCount(1, $registration->validationErrors, 
+            'Certificando que há o número certo de campos com erro de validação quando um CAMPO OBRIGATÓRIO NÃO PREENCHIDO condicionado a outro campo condicionado CAUSA erro de validação quando a condição para sua exibição FOI ATENDIDA');
+
+        $registration->$field_cor = 'Amarelo';
+        $this->assertEmpty($registration->validationErrors, 
+            'Certificando que um CAMPO OBRIGATÓRIO NÃO PREENCHIDO, quando condicionado a outro campo condicionado, NÃO causa erro de validação quando a condição para sua exibição NÃO foi ATENDIDA APÓS TER SIDO ATENDIDA ANTERIORMENTE');
+
+    }
+
+    function testConditionalFieldVisibleWhenParentIsCheckboxesArrayContainingValue() {
+        $admin = $this->userDirector->createUser('admin');
+        $this->login($admin);
+
+        /** @var Opportunity */
+        $opportunity = $this->opportunityBuilder
+                            ->reset(owner: $admin->profile, owner_entity: $admin->profile)
+                            ->fillRequiredProperties()
+                            ->save()
+                            ->firstPhase()
+                                ->setRegistrationPeriod(new Open)
+                                ->createStep('etapa')
+                                ->createField(
+                                    'areas',
+                                    'checkboxes',
+                                    required: true,
+                                    options: [
+                                        'Audiovisual e cinema',
+                                        'Música, som e produção sonora',
+                                        'Comercial, vendas e varejo',
+                                    ]
+                                )
+                                ->createField(
+                                    'habilidades-av',
+                                    'checkboxes',
+                                    required: true,
+                                    field_condition: 'areas:Audiovisual e cinema',
+                                    options: [
+                                        'Edição / montagem',
+                                        'Roteiro (cinema, ficção, documentário)',
+                                    ]
+                                )
+                                ->done()
+                            ->save()
+                            ->refresh()
+                            ->getInstance();
+
+        $field_areas = $this->opportunityBuilder->getFieldName('areas');
+        $field_habilidades = $this->opportunityBuilder->getFieldName('habilidades-av');
+        $habilidades_config = $this->opportunityBuilder->getField('habilidades-av');
+
+        $registrations = $this->registrationDirector->createDraftRegistrations(
+            $opportunity,
+            number_of_registrations: 2
+        );
+
+        list($com_audiovisual, $sem_audiovisual) = $registrations;
+
+        $com_audiovisual->$field_areas = [
+            'Audiovisual e cinema',
+            'Música, som e produção sonora',
+            'Comercial, vendas e varejo',
+        ];
+
+        $this->assertTrue(
+            $com_audiovisual->isFieldVisisble($habilidades_config),
+            'Campo condicionado a checkboxes deve ficar visível quando o valor esperado está entre os itens marcados'
+        );
+
+        $this->assertArrayHasKey(
+            $field_habilidades,
+            $com_audiovisual->validationErrors,
+            'Campo obrigatório condicionado a checkboxes deve validar quando a condição foi atendida'
+        );
+
+        $sem_audiovisual->$field_areas = [
+            'Música, som e produção sonora',
+            'Comercial, vendas e varejo',
+        ];
+
+        $this->assertFalse(
+            $sem_audiovisual->isFieldVisisble($habilidades_config),
+            'Campo condicionado a checkboxes não deve ficar visível quando o valor esperado não está entre os itens marcados'
+        );
+
+        $this->assertArrayNotHasKey(
+            $field_habilidades,
+            $sem_audiovisual->validationErrors,
+            'Campo obrigatório condicionado a checkboxes não deve validar quando a condição não foi atendida'
+        );
+    }
+
+    function testRequiredFirstPhaseFieldOnSecondDataCollectionPhase() {
+        $admin = $this->userDirector->createUser('admin');
+        $this->login($admin);
+
+        /** @var Opportunity */
+        $opportunity = $this->opportunityBuilder
+                            ->reset(owner: $admin->profile, owner_entity: $admin->profile)
+                            ->fillRequiredProperties()
+                            ->save()
+                            ->firstPhase()
+                                ->setRegistrationPeriod(new Open)
+                                ->createStep('etapa')
+                                ->createField('cor', 'select', required:true, options:['Azul', 'Vermelho', 'Amarelo'])
+                                ->done()
+                            ->addDataCollectionPhase()
+                                ->setRegistrationPeriod(new Open)
+                                ->createStep('etapa')
+                                ->createField('fruta', 'select', required:true, options:['Abacate', 'Morango', 'Banana'])
+                                ->done()
+                            ->save()
+                            ->refresh()
+                            ->getInstance();
+        
+        $field_cor = $this->opportunityBuilder->getFieldName('cor');
+        $field_fruta = $this->opportunityBuilder->getFieldName('fruta');
+
+        $registrations = $this->registrationDirector->createDraftRegistrations(
+            $opportunity,
+            number_of_registrations: 1
+        );
+        
+        $registration = $registrations[0];
+        
+        $registration->$field_cor = 'Vermelho';
+        
+        $this->assertEmpty($registration->validationErrors, 
+            'Certificando que não há erro de validação na primeira fase, após preencher todos os campos obrigatórios');
+
+        $registration->send();
+        $registration->setStatus(10);
+
+        $second_phase = $opportunity->nextPhase;
+        $second_phase->syncRegistrations();
+
+        $second_phase_registration = $registration->nextPhase;
+        $second_phase_registration->$field_fruta = 'Banana';
+
+        $this->assertEmpty($second_phase_registration->validationErrors, 
+            'Certificando que não há erro de validação na segunda fase, após preencher todos os campos obrigatórios');
+        
+    }
+
+    function testAgentOwnerFieldsApi() {
+        $admin = $this->userDirector->createUser('admin');
+        $this->login($admin);
+
+        /** @var Opportunity */
+        $opportunity = $this->opportunityBuilder
+                            ->reset(owner: $admin->profile, owner_entity: $admin->profile)
+                            ->fillRequiredProperties()
+                            ->save()
+                            ->firstPhase()
+                                ->setRegistrationPeriod(new Open)
+                                ->createStep('etapa')
+                                ->createOwnerField('campo-pessoa-deficiente', 'pessoaDeficiente', 'Pessoa com Deficiência', required: false)
+                                ->createOwnerField('campo-escolaridade', 'escolaridade', 'Escolaridade', required: false)
+                                ->createField('campo-texto', 'text', 'Campo Texto', required: false)
+                                ->createField('campo-select', 'select', 'Campo Select', required: false, options: ['Opção 1', 'Opção 2'])
+                                ->done()
+                            ->save()
+                            ->refresh()
+                            ->getInstance();
+
+        // Obter os nomes dos campos
+        $field_pessoa_deficiente_name = $this->opportunityBuilder->getFieldName('campo-pessoa-deficiente');
+        $field_escolaridade_name = $this->opportunityBuilder->getFieldName('campo-escolaridade');
+        $field_texto_name = $this->opportunityBuilder->getFieldName('campo-texto');
+
+        // Criar inscrições
+        $number_of_registrations = 50;
+        $registrations = $this->registrationDirector->createSentRegistrations(
+            $opportunity,
+            number_of_registrations: $number_of_registrations
+        );
+
+        // Preencher valores nos campos @ através do agente responsável
+        $pessoa_deficiente_options = ['Auditiva', 'Visual', 'Física-motora', 'Intelectual'];
+        $escolaridade_options = [
+            'Ensino Fundamental Completo',
+            'Ensino Médio Completo',
+            'Ensino Superior Completo',
+            'Mestrado Completo'
+        ];
+
+        // Armazenar valores esperados por ID de inscrição para comparação posterior
+        $expected_values_by_id = [];
+
+        // Preencher valores diretamente nas inscrições usando os nomes dos campos
+        foreach ($registrations as $index => $registration) {
+            // Preencher pessoaDeficiente
+            $pessoa_deficiente_value = [$pessoa_deficiente_options[$index % count($pessoa_deficiente_options)]];
+            $registration->$field_pessoa_deficiente_name = $pessoa_deficiente_value;
+            
+            // Preencher escolaridade
+            $escolaridade_value = $escolaridade_options[$index % count($escolaridade_options)];
+            $registration->$field_escolaridade_name = $escolaridade_value;
+            
+            // Armazenar valores esperados pelo ID da inscrição
+            $expected_values_by_id[$registration->id] = [
+                'pessoaDeficiente' => $pessoa_deficiente_value,
+                'escolaridade' => $escolaridade_value
+            ];
+            
+            $registration->save(true);
+        }
+
+        $opportunity->registerRegistrationMetadata();
+
+        // Buscar inscrições via API, selecionando apenas campos do tipo @
+        $query = new ApiQuery(Registration::class, [
+            '@select' => "id,number,{$field_pessoa_deficiente_name},{$field_escolaridade_name}",
+            'opportunity' => API::EQ($opportunity->id),
+            'status' => API::GTE(Registration::STATUS_DRAFT),
+            '@order' => 'id ASC'
+        ]);
+
+        $result = $query->find();
+
+        // Verificar que todas as inscrições foram retornadas
+        $this->assertCount($number_of_registrations, $result, 'Certificando que todas as inscrições foram retornadas pela API');
+
+        // Verificar que cada inscrição retornada contém os campos @ esperados com os valores preenchidos
+        foreach ($result as $registration_data) {
+            $registration_id = $registration_data['id'];
+            
+            $this->assertArrayHasKey($field_pessoa_deficiente_name, $registration_data, 'Certificando que o campo pessoaDeficiente está presente na resposta da API');
+            $this->assertArrayHasKey($field_escolaridade_name, $registration_data, 'Certificando que o campo escolaridade está presente na resposta da API');
+
+            // Verificar que os valores não estão vazios
+            $this->assertNotEmpty($registration_data[$field_pessoa_deficiente_name], 'Certificando que pessoaDeficiente não está vazio');
+            $this->assertNotEmpty($registration_data[$field_escolaridade_name], 'Certificando que escolaridade não está vazia');
+            
+            // Verificar que os valores foram preenchidos corretamente usando o ID da inscrição
+            $this->assertArrayHasKey($registration_id, $expected_values_by_id, "Certificando que a inscrição {$registration_id} está nos valores esperados");
+            
+            $expected = $expected_values_by_id[$registration_id];
+            
+            $this->assertEquals($expected['pessoaDeficiente'], $registration_data[$field_pessoa_deficiente_name], "Certificando que o valor de pessoaDeficiente está correto na inscrição {$registration_id}");
+            $this->assertEquals($expected['escolaridade'], $registration_data[$field_escolaridade_name], "Certificando que o valor de escolaridade está correto na inscrição {$registration_id}");
+        }
+    }
+
+    function testAgentCollectiveFieldsApi() {
+        $admin = $this->userDirector->createUser('admin');
+        $this->login($admin);
+
+        /** @var Opportunity */
+        $opportunity = $this->opportunityBuilder
+                            ->reset(owner: $admin->profile, owner_entity: $admin->profile)
+                            ->fillRequiredProperties()
+                            ->save()
+                            ->firstPhase()
+                                ->setRegistrationPeriod(new Open)
+                                ->createStep('etapa')
+                                ->createCollectiveField('campo-pessoa-deficiente-coletivo', 'pessoaDeficiente', 'Pessoa com Deficiência (Coletivo)', required: false)
+                                ->createCollectiveField('campo-escolaridade-coletivo', 'escolaridade', 'Escolaridade (Coletivo)', required: false)
+                                ->createField('campo-texto', 'text', 'Campo Texto', required: false)
+                                ->done()
+                            ->save()
+                            ->refresh()
+                            ->getInstance();
+
+        // Obter os nomes dos campos
+        $field_pessoa_deficiente_name = $this->opportunityBuilder->getFieldName('campo-pessoa-deficiente-coletivo');
+        $field_escolaridade_name = $this->opportunityBuilder->getFieldName('campo-escolaridade-coletivo');
+
+        // Criar inscrições
+        $number_of_registrations = 50;
+        $registrations = $this->registrationDirector->createSentRegistrations(
+            $opportunity,
+            number_of_registrations: $number_of_registrations
+        );
+
+        // Preencher valores nos campos @ através do agente coletivo
+        $pessoa_deficiente_options = ['Auditiva', 'Visual', 'Física-motora', 'Intelectual'];
+        $escolaridade_options = [
+            'Ensino Fundamental Completo',
+            'Ensino Médio Completo',
+            'Ensino Superior Completo',
+            'Mestrado Completo'
+        ];
+
+        // Armazenar valores esperados por ID de inscrição para comparação posterior
+        $expected_values_by_id = [];
+
+        // Criar agentes coletivos e relacioná-los às inscrições, preenchendo valores
+        $app = App::i();
+        foreach ($registrations as $index => $registration) {
+            // Criar agente coletivo
+            $collective_agent = $this->agentDirector->createAgent(
+                $registration->owner->user,
+                type: 2,
+                save: true,
+                flush: false
+            );
+
+            // Preencher valores no agente coletivo
+            $pessoa_deficiente_value = [$pessoa_deficiente_options[$index % count($pessoa_deficiente_options)]];
+            $collective_agent->pessoaDeficiente = $pessoa_deficiente_value;
+            
+            $escolaridade_value = $escolaridade_options[$index % count($escolaridade_options)];
+            $collective_agent->escolaridade = $escolaridade_value;
+            
+            $collective_agent->save(true);
+
+            // Relacionar agente coletivo à inscrição
+            $registration->createAgentRelation($collective_agent, 'coletivo');
+
+            // Preencher valores diretamente nas inscrições usando os nomes dos campos
+            $registration->$field_pessoa_deficiente_name = $pessoa_deficiente_value;
+            $registration->$field_escolaridade_name = $escolaridade_value;
+            
+            // Armazenar valores esperados pelo ID da inscrição
+            $expected_values_by_id[$registration->id] = [
+                'pessoaDeficiente' => $pessoa_deficiente_value,
+                'escolaridade' => $escolaridade_value
+            ];
+            
+            $registration->save(true);
+        }
+
+        $opportunity->registerRegistrationMetadata();
+
+        // Buscar inscrições via API, selecionando apenas campos do tipo @
+        $query = new ApiQuery(Registration::class, [
+            '@select' => "id,number,{$field_pessoa_deficiente_name},{$field_escolaridade_name}",
+            'opportunity' => API::EQ($opportunity->id),
+            'status' => API::GTE(Registration::STATUS_DRAFT),
+            '@order' => 'id ASC'
+        ]);
+
+        $result = $query->find();
+
+        // Verificar que todas as inscrições foram retornadas
+        $this->assertCount($number_of_registrations, $result, 'Certificando que todas as inscrições foram retornadas pela API');
+
+        // Verificar que cada inscrição retornada contém os campos @ esperados com os valores preenchidos
+        foreach ($result as $registration_data) {
+            $registration_id = $registration_data['id'];
+            
+            $this->assertArrayHasKey($field_pessoa_deficiente_name, $registration_data, 'Certificando que o campo pessoaDeficiente (coletivo) está presente na resposta da API');
+            $this->assertArrayHasKey($field_escolaridade_name, $registration_data, 'Certificando que o campo escolaridade (coletivo) está presente na resposta da API');
+
+            // Verificar que os valores não estão vazios
+            $this->assertNotEmpty($registration_data[$field_pessoa_deficiente_name], 'Certificando que pessoaDeficiente (coletivo) não está vazio');
+            $this->assertNotEmpty($registration_data[$field_escolaridade_name], 'Certificando que escolaridade (coletivo) não está vazia');
+            
+            // Verificar que os valores foram preenchidos corretamente usando o ID da inscrição
+            $this->assertArrayHasKey($registration_id, $expected_values_by_id, "Certificando que a inscrição {$registration_id} está nos valores esperados");
+            
+            $expected = $expected_values_by_id[$registration_id];
+            
+            $this->assertEquals($expected['pessoaDeficiente'], $registration_data[$field_pessoa_deficiente_name], "Certificando que o valor de pessoaDeficiente (coletivo) está correto na inscrição {$registration_id}");
+            $this->assertEquals($expected['escolaridade'], $registration_data[$field_escolaridade_name], "Certificando que o valor de escolaridade (coletivo) está correto na inscrição {$registration_id}");
+        }
+    }
+
+    function testSendRegistration() 
+    {
+        $admin = $this->userDirector->createUser('admin');
+        $this->login($admin);
+
+        /** @var Opportunity */
+        $opportunity = $this->opportunityBuilder
+                            ->reset(owner: $admin->profile, owner_entity: $admin->profile)
+                            ->fillRequiredProperties()
+                            ->setVacancies(2)
+                            ->addProponentType(ProponentTypes::PESSOA_FISICA)
+                            ->addCategory('Literatura')
+                            ->save()
+                            ->firstPhase()
+                                ->setRegistrationPeriod(new Open)
+                                ->createStep('etapa')
+                                ->createField('cor', 'select', required:true, options:['Azul', 'Vermelho', 'Amarelo'])
+                                ->done()
+                            ->save()
+                            ->refresh()
+                            ->getInstance();
+                            
+        $field_cor = $this->opportunityBuilder->getFieldName('cor');
+
+        $registrations = $this->registrationDirector->createDraftRegistrations(
+            $opportunity,
+            number_of_registrations: 2,
+            category: 'Literatura',
+            proponent_type: ProponentTypes::PESSOA_FISICA->value
+        );
+        
+        foreach($registrations as $registration) {  
+            $registration->$field_cor = 'Vermelho';
+            $registration->save(true);
+            
+            $request = $this->requestFactory->POST(
+                controller_id: 'registration', 
+                action: 'send', 
+                url_params: [$registration->id],
+                ajax: true
+            );
+
+            $this->assertStatus200($request, 'Garantindo status 200 na rota POST "registration.send" para inscrições');
+
+            $this->assertEquals(Registration::STATUS_SENT, $registration->status, 'Certificando que a inscrição foi enviada');
+        }
+
+    }
+                            
+}

@@ -2,10 +2,16 @@
 
 use MapasCulturais\i;
 use MapasCulturais\App;
+use MapasCulturais\Definitions\FileGroup;
 use MapasCulturais\Utils;
 use MapasCulturais\Entities\Agent;
+use MapasCulturais\Entities\EvaluationMethodConfiguration;
 use MapasCulturais\Entities\Opportunity;
 use MapasCulturais\Entities\Registration;
+use MapasCulturais\Entities\EvaluationMethodConfigurationAgentRelation;
+use MapasCulturais\Entities\Seal;
+use MapasCulturais\Entities\User;
+use UserManagement\Entities\SystemRole;
 
 return [
     'recreate pcache' => function () {
@@ -175,7 +181,7 @@ return [
 
             foreach ($fields as $field) {
                 $field_name = "field_" . $field['id'];
-                $field_categories = unserialize($field['categories']);
+                $field_categories = unserialize($field['categories'], ['allowed_classes' => false]);
 
                 $metadata = $conn->fetchAssoc("SELECT * from registration_meta WHERE object_id = {$reg_id} AND key = '{$field_name}'");
 
@@ -183,7 +189,7 @@ return [
                     $agent = $registration->owner;
                     $agent_revision = $agent->getRevisionsByDate($sent_timestamp);
                     $agent_revision_data = $agent_revision->getRevisionData();
-                    $cfg = unserialize($field['config']);
+                    $cfg = unserialize($field['config'], ['allowed_classes' => false]);
                     $_f = $cfg['entityField'];
 
                     $value = null;
@@ -235,7 +241,7 @@ return [
             if (!$agent->documento) {
                 $op = "Agente sem documento definido";
                 $txt .= "{$agent->id} | {$agent->name} | {$agent->nomeCompleto} | {$agent->emailPrivado} | {$_types[$agent->type->id]} | {$op} \n";
-                $app->log->debug($agent->id . " " . $op);
+                echo "\n" . ($agent->id . " " . $op);
             }else{
                 $doc = preg_replace('/[^0-9]/i', '', $agent->documento);
                 $type = (strlen($doc) > 11) ? "CNPJ" : "CPF";
@@ -253,12 +259,12 @@ return [
                     
                     $op = "Definido {$type} para o agente";
                     $txt .= "{$agent->id} | {$agent->name} | {$agent->nomeCompleto} | {$agent->emailPrivado} | {$_types[$agent->type->id]} | {$op} \n";
-                    $app->log->debug($agent->id . " " . $op);
+                    echo "\n" . ($agent->id . " " . $op);
                     
                 } else {
                     $op = "{$type} do agente é inválido";
                     $txt .= "{$agent->id} | {$agent->name} | {$agent->nomeCompleto} | {$agent->emailPrivado} | {$_types[$agent->type->id]} | {$op} \n";
-                    $app->log->debug($agent->id . " " . $op);
+                    echo "\n" . ($agent->id . " " . $op);
                 }
             }
 
@@ -396,12 +402,12 @@ return [
                         if($result = Utils::parseSocialMediaUser($domain,$_social_media)) {
                             $obj->$media = $result;
                             $obj->save(true);
-                            $app->log->debug("Mídia social {$media} da entidade {$entity} alterada de {$_social_media} para {$obj->$media} {$obj->id}");
+                            echo "\n" . ("Mídia social {$media} da entidade {$entity} alterada de {$_social_media} para {$obj->$media} {$obj->id}");
                         } else {
                             $entity_meta = strtolower($entity)."_meta";
                             $new_key = "bkp_{$media}";
                             $em = $conn->executeQuery("UPDATE {$entity_meta} set key = '{$new_key}' WHERE object_id = $obj->id AND key = '{$media}'");
-                            $app->log->debug("Mídia social {$media} não foi validada e foi alterada a chave {$new_key} {$obj->id}");
+                            echo "\n" . ("Mídia social {$media} não foi validada e foi alterada a chave {$new_key} {$obj->id}");
                         }
                     }
                 }
@@ -427,6 +433,39 @@ return [
             });
         }
         $app->auth->logout();
+    },
+
+    'criando fases de resultado final para as oportunidades existentes sem fase final' => function () {
+        DB_UPDATE::enqueue('Opportunity', 'parent_id IS NULL', function(MapasCulturais\Entities\Opportunity $opportunity) {
+            $phases = $opportunity->allPhases;
+
+            $last_created_phase = array_pop($phases);
+
+            if(!$last_created_phase->isLastPhase) {
+                $end_date = $last_created_phase->evaluationMethodConfiguration ? 
+                    $last_created_phase->evaluationMethodConfiguration->evaluationTo :
+                    $last_created_phase->registrationTo;
+
+                $class = get_class($opportunity);
+
+                /** @var Opportunity $last_phase */
+                $last_phase = new $class;
+                $last_phase->owner = $opportunity->owner->refreshed();
+                $last_phase->status = -1;
+                $last_phase->parent = $opportunity->refreshed();
+                $last_phase->name = i::__('Publicação final do resultado');
+                $last_phase->type = $opportunity->type;
+                $last_phase->isLastPhase = true;
+                $last_phase->isOpportunityPhase = true;
+                $last_phase->isDataCollection = '0';
+                $last_phase->publishTimestamp = $end_date;
+                $last_phase->publishedRegistrations = $last_created_phase->publishedRegistrations;
+                $last_phase->subsiteId = $opportunity->subsiteId;
+                $last_phase->save(true);
+
+                $last_phase->enqueueRegistrationSync();
+            }
+        });
     },
 
     'sync last opportunity phases registrations' => function() {
@@ -455,7 +494,7 @@ return [
             $app->enableAccessControl();
         });
     },
-    'Reordena campo pessoa deficiente dos agentes' => function () use ($app) {
+    'Reordena campo pessoa deficiente dos agentes again..two' => function () use ($app) {
         $ajust_array_value = function ($value) {
             $result =  array_filter($value, function ($val) {
                 $val = trim($val);
@@ -466,10 +505,14 @@ return [
                 }
             });
 
+            if (empty($result)) {
+                return '[]'; 
+            }
+
             $result = implode('","', $result);
             $result = '["' . $result . '"]';
 
-            return $result ?: [""];
+            return $result ?: [];
         };
 
         $app->disableAccessControl();
@@ -478,10 +521,10 @@ return [
             $conn = $app->em->getConnection();
             if($data = $conn->fetchAll("SELECT value from agent_meta WHERE object_id = {$agent->id} AND key = 'pessoaDeficiente'")) {
                 $_result = [""];
-                $value = json_decode($data[0]['value']);
+                $value = json_decode($data[0]['value'],true);
                 $modify = false;
                 if(is_array($value)) {
-                    $_result = $ajust_array_value($value);
+                    $_result = $ajust_array_value(array_values($value));
                     $modify = true;
                 }else {
                     $_value = explode(";", $value);
@@ -492,7 +535,7 @@ return [
                 }
                 
                 if($modify) {
-                    $app->log->debug("Campo de pessoa com deficiencia alterado no agente {$agent->id}");
+                    echo "\n" . ("Campo de pessoa com deficiencia alterado no agente {$agent->id}");
                     $conn->executeQuery("UPDATE agent_meta set value = '{$_result}' where object_id = {$agent->id} AND key = 'pessoaDeficiente'");
                 }
             }
@@ -548,7 +591,7 @@ return [
                     }
 
                     if($modify) {
-                        $app->log->debug("Campo de pessoa com deficiencia alterado na inscrição {$registration->id}");
+                        echo "\n" . ("Campo de pessoa com deficiencia alterado na inscrição {$registration->id}");
                         $conn->executeQuery("UPDATE registration_meta set value = '{$_result}' where object_id = {$registration->id} AND key = '{$field_name}'");
                     }
                 }
@@ -556,18 +599,446 @@ return [
         }
     },
 
+
+    'Adiciona o step_id nos campos e anexos dos formulários nas oportunidades' => function () {
+
+        $app = \MapasCulturais\App::i();
+
+        DB_UPDATE::enqueue('Opportunity', 'id > 0', function(MapasCulturais\Entities\Opportunity $opportunity) use ($app) {
+            $conn = $app->em->getConnection();
+            $fields = $conn->fetchAll("SELECT id FROM registration_field_configuration WHERE opportunity_id = {$opportunity->id}");
+            $files = $conn->fetchAll("SELECT id FROM registration_file_configuration WHERE opportunity_id = {$opportunity->id}");
+
+            echo "\ncriando step";
+            if (!empty($fields) || !empty($files)) {
+                echo "\ncriando step " . empty($fields) . ' - ' . empty($files);
+                $datetime = new DateTime();
+                $datetime = $datetime->format('Y-m-d H:i:s');
+                $conn->executeQuery("INSERT INTO registration_step (name, display_order, opportunity_id, create_timestamp, update_timestamp) VALUES ('', 0, {$opportunity->id}, '{$datetime}', '{$datetime}');");
+                $stepId = $conn->lastInsertId();
+
+                if (!empty($fields)) {
+                    foreach ($fields as $field) {
+                        $conn->executeQuery("UPDATE registration_field_configuration SET step_id = {$stepId} WHERE id = {$field['id']}");
+                    }
+                }
+
+                if (!empty($files)) {
+                    foreach ($files as $file) {
+                        $conn->executeQuery("UPDATE registration_file_configuration SET step_id = {$stepId} WHERE id = {$file['id']}");
+                    }
+                }
+            }
+        });
+    },
+
     'Redistribui as avaliações de todas as oportunidades para os avaliadores novamente' => function() use ($app) {
         DB_UPDATE::enqueue(Opportunity::class, "id in (select opportunity_id from evaluation_method_configuration)", function (Opportunity $opportunity) use($app) {
             if($opportunity->getEvaluationMethodDefinition()){
                 $em = $opportunity->getEvaluationMethod();
-                $app->log->debug('distribuindo avaliações da oportunidade ' . $opportunity->id . ' - ' . $opportunity->name);
+                echo "\n" . ('distribuindo avaliações da oportunidade ' . $opportunity->id . ' - ' . $opportunity->name);
                 $em->redistributeRegistrations($opportunity);
                 foreach($opportunity->getEvaluationCommittee(true) as $relation) {
-                    $app->log->debug('atualiza sumário do avaliador ' . $relation->agent->id . ' - ' . $relation->agent->name);
+                    echo "\n" . ('atualiza sumário do avaliador ' . $relation->agent->id . ' - ' . $relation->agent->name);
                     $relation->updateSummary();
                 }
 
             }
         });
     },
+
+    'garante que os avaliadores dos editais sejam sempre os agentes principais de perfis' => function() use ($app) {
+        $filename = PUBLIC_PATH . "/evaluators-default-profiles/logs.txt";
+        $dirname = dirname($filename);
+
+        if (!file_exists($dirname)) {
+            mkdir($dirname, 0777, true);
+        }
+
+        if (!file_exists($filename)) {
+            touch($filename);
+        }
+
+        DB_UPDATE::enqueue(EvaluationMethodConfigurationAgentRelation::class, 'agent_id not in (select profile_id from usr where profile_id is not null)', function (EvaluationMethodConfigurationAgentRelation $relation) use($app, $filename) { 
+            $agent = $relation->agent;
+            $relation->agent = $agent->user->profile; 
+            $relation->save(true); 
+            $content ="-----\n";
+            $content.="Avaliador anterior: {$agent->name} - {$agent->id}\n";
+            $content.="Primeira fase: {$relation->owner->opportunity->firstPhase->name} ({$relation->owner->opportunity->firstPhase->id})\n";
+            $content.="Fase de avaliação: {$relation->owner->opportunity->name} ({$relation->owner->opportunity->id})\n";
+            $content.="Avaliador atual: {$agent->user->profile->name} - {$agent->user->profile->id}\n\n";
+            $content.="-----\n";
+            
+            echo "\n" . ($content);
+
+            $relation->owner->opportunity->enqueueToPCacheRecreation([$agent->user]);
+            
+            file_put_contents($filename, $content, FILE_APPEND);
+        });
+    },
+
+    "Normalização das áreas de atuação" => function () {
+        $app = App::i();
+
+        $taxonomies = $app->getRegisteredTaxonomies(Agent::class);
+        $terms = $taxonomies['area']->restrictedTerms;
+
+        $normalize_for_comparison = function ($input) {
+            $input = Utils::sanitizeString($input, 'lower');
+
+            $input = preg_replace('/\b(e|&|and|\/)\b/i', '', $input);
+
+            $input = str_replace(['-', '_', ',', '.', '(', ')'], ' ', $input);
+
+            $input = preg_replace('/\s+/', ' ', $input);
+
+            return trim($input);
+        };
+
+        $terms_area = [];
+        foreach ($terms as $term) {
+            $terms_area[$term] = $normalize_for_comparison($term);
+        }
+
+        DB_UPDATE::enqueue('Agent', "id > 1", function (Agent $agent) use ($terms_area, $normalize_for_comparison) {
+            if ($areas = $agent->terms['area']) {
+                $result = [];
+
+                foreach ($areas as $area) {
+                    $normalized_area = $normalize_for_comparison($area);
+                    $matched = false;
+
+                    foreach ($terms_area as $correct_value => $normalized_reference) {
+                        if ($normalized_area === $normalized_reference) {
+                            $result[] = $correct_value;
+                            $matched = true;
+                            break;
+                        }
+                    }
+
+                    if (!$matched) {
+                        $result[] = $area;
+                    }
+                }
+                sort($areas);
+                sort($result);
+
+                if($areas != $result) {
+                    $agent->terms['area'] = $result;
+                    $agent->disableUpdateTimestamp();
+                    $agent->save(true);
+                }
+            }
+        });
+
+    },
+    
+    'Atualiza valores do campo comunidadesTradicional' => function () {
+        $app = App::i();
+
+        $mapping = [
+            'Comunidade extrativista' => 'Extrativistas',
+            'Comunidade ribeirinha' => 'Ribeirinhos',
+            'Povos indígenas/originários' => 'Povos indígenas',
+            'Comunidades de pescadores(as) artesanais' => 'Pescadores artesanais',
+            'Povos de terreiro' => 'Povos e comunidades de terreiro/povos e comunidades de matriz africana',
+            'Povos de quilombola' => 'Quilombolas',
+            'Pomeranos' => 'Povo Pomerano',
+        ];
+
+        $old_values = implode(',', array_map(fn($value) => "'$value'", array_keys($mapping)));
+
+        $agents_where = "
+            id IN (
+                SELECT object_id 
+                FROM agent_meta 
+                WHERE 
+                    key = 'comunidadesTradicional' AND 
+                    value IN ($old_values)
+                )";
+
+        DB_UPDATE::enqueue('Agent', $agents_where, function (MapasCulturais\Entities\Agent $agent) use ($mapping, $app) {
+
+            $agent->disableUpdateTimestamp();
+
+            $comunidade_tradicional = $agent->comunidadesTradicional ?: null;
+
+            if ($comunidade_tradicional && isset($mapping[$comunidade_tradicional])) {
+
+                $result =  $mapping[$comunidade_tradicional];
+                $agent->comunidadesTradicional =  $result;
+                echo "\n" . ("Agente {$agent->id} - Comunidade tradicional atualizado de '{$comunidade_tradicional}' para '{$result}'");
+                $agent->save(true);
+            }
+        });
+    },
+
+    'remove arquivos zipArchive das registrations' => function () {
+        $app = App::i();
+        
+        if(!env('CLEAN_ZIPARCHIVE')) {
+            echo "\n" . ("PARA FAZER A LIMPEZA DOS ARQUIVOS zipArchive DAS INSCRIÇÕES, DEFINA A VARIAVEL DE AMBIETE CLEAN_ZIPARCHIVE=1");
+            return false;
+        }
+
+        $app->registerFileGroup('registration', new FileGroup('zipArchive',['^application/zip$'], i::__('O arquivo não é um ZIP.'), true, null, true));
+        DB_UPDATE::enqueue('File', "grp = 'zipArchive' AND object_type = 'MapasCulturais\Entities\Registration'", function (MapasCulturais\Entities\RegistrationFile $file) use($app) {
+            echo "\n" . ("REMOVENDO ARQUIVO {$file->path}");
+            file_put_contents(LOGS_PATH . 'removed-zipArchives.log', "\n{$file->path}", FILE_APPEND);
+            $file->delete(true);
+        });
+    },
+    
+    'create entities history entries User, Seal, EvaluationMethodConfiguration, SystemRole' => function() {
+        $app = \MapasCulturais\App::i();
+
+        $role = $app->repo('Role')->findOneBy(['name' => 'saasSuperAdmin'], ['id' => 'desc']);
+        $role = $role ?: $app->repo('Role')->findOneBy(['name' => 'saasAdmin'], ['id' => 'desc']);
+        $role = $role ?: $app->repo('Role')->findOneBy(['name' => 'superAdmin'], ['id' => 'desc']);
+
+        $admin_user = $role->user;
+
+        $classes = [
+            User::class, 
+            Seal::class, 
+            EvaluationMethodConfiguration::class, 
+            \UserManagement\Entities\SystemRole::class
+        ];
+
+        foreach ($classes as $class){
+            DB_UPDATE::enqueue("\\" . $class, "id not in (select object_id from entity_revision where object_type = '$class')", function (MapasCulturais\Entity $entity) use ($app, $admin_user) {
+                echo "\nCRIANDO REVISÕES DA $entity";
+                if ($entity instanceof User) {
+                    $user = $entity;
+                } else if($entity instanceof SystemRole) {
+                    $user = $admin_user;
+                } else if($entity instanceof EvaluationMethodConfiguration) {
+                    $user = $entity->owner->owner->user;
+                } else {
+                    $user = $entity->owner->user;
+                }
+
+                if ($user->status != 1) {
+                    $user = $admin_user;
+                }
+
+                $app->user = $user;
+                $app->auth->authenticatedUser = $user;
+
+                $entity->_newCreatedRevision();
+            });
+        }
+        $app->auth->logout();
+    },
+
+    'create updated entities history entries User, Seal, EvaluationMethodConfiguration, SystemRole' => function() {
+        $app = \MapasCulturais\App::i();
+
+        $role = $app->repo('Role')->findOneBy(['name' => 'saasSuperAdmin'], ['id' => 'desc']);
+        $role = $role ?: $app->repo('Role')->findOneBy(['name' => 'saasAdmin'], ['id' => 'desc']);
+        $role = $role ?: $app->repo('Role')->findOneBy(['name' => 'superAdmin'], ['id' => 'desc']);
+
+        $admin_user = $role->user;
+
+        foreach (['User', 'Seal', 'EvaluationMethodConfiguration', '\UserManagement\Entities\SystemRole'] as $class){
+            DB_UPDATE::enqueue($class, 'id > 0', function (MapasCulturais\Entity $entity) use ($app, $admin_user) {
+                if ($entity instanceof User) {
+                    $user = $entity;
+                } else if($entity instanceof SystemRole) {
+                    $user = $admin_user;
+                } else if($entity instanceof EvaluationMethodConfiguration) {
+                    $user = $entity->owner->owner->user;
+                } else {
+                    $user = $entity->owner->user;
+                }
+                
+                if ($user->status != 1) {
+                    $user = $admin_user;
+                }
+
+                $app->user = $user;
+                $app->auth->authenticatedUser = $user;
+
+                $entity->controller->action = \MapasCulturais\Entities\EntityRevision::ACTION_MODIFIED;
+
+                $entity->_newModifiedRevision();
+            });
+        }
+        $app->auth->logout();
+    },
+
+    'Migra valuers_exceptions_list para arrays de inteiros (include e exclude)' => function() {
+        $app = App::i();
+        $conn = $app->em->getConnection(); 
+        if (!$conn->fetchAll("SELECT column_name FROM information_schema.columns WHERE table_name='registration' AND column_name='valuers_exceptions_list'")) {
+            echo "\n" . ("[valuers_exceptions_list] Coluna não existe, migração ignorada");
+            return;
+        }
+        echo "\n" . ("[valuers_exceptions_list] Enfileirando migração (apenas inscrições com include ou exclude não vazios)");
+        $where = "(valuers_exceptions_list::jsonb->'include' != '[]'::jsonb OR valuers_exceptions_list::jsonb->'exclude' != '[]'::jsonb)";
+        DB_UPDATE::enqueue('Registration', $where, function (Registration $registration) use ($app) {
+            $exceptions = $registration->valuersExceptionsList;
+            $include = array_values(array_map('intval', (array)($exceptions->include ?? [])));
+            $exclude = array_values(array_map('intval', (array)($exceptions->exclude ?? [])));
+            if (empty($include) && empty($exclude)) {
+                return;
+            }
+            $conn = $app->em->getConnection();
+            $exceptions = $registration->getValuersExceptionsList();
+            $exceptions->include = $include;
+            $exceptions->exclude = $exclude;
+            $conn->executeQuery(
+                "UPDATE registration SET valuers_exceptions_list = :exceptions WHERE id = :id",
+                [
+                    'exceptions' => json_encode($exceptions),
+                    'id' => $registration->id,
+                ]
+            );
+            echo "\n" . ("[valuers_exceptions_list] Inscrição {$registration->id} migrada (include: " . implode(',', $include) . ", exclude: " . implode(',', $exclude) . ")");
+        });
+    },
+    'ajusta requiredAddressFields dos campos @location obrigatórios' => function () {
+        DB_UPDATE::enqueue(
+            'RegistrationFieldConfiguration',
+            "field_type IN ('agent-owner-field','agent-collective-field','space-field') AND required IS TRUE",
+            function (MapasCulturais\Entities\RegistrationFieldConfiguration $field) {
+                $config = $field->config;
+
+                if (!is_array($config)) {
+                    return;
+                }
+
+                // Apenas campos @location
+                if (($config['entityField'] ?? null) !== '@location') {
+                    return;
+                }
+
+                // Não sobrescreve quem já foi configurado manualmente
+                if (!empty($config['requiredAddressFieldsBrazil']) || !empty($config['requiredAddressFieldsOther'])) {
+                    return;
+                }
+
+                // Brasil: país, estado (level2), município (level4)
+                $config['requiredAddressFieldsBrazil'] = [
+                    'address_level0' => true,
+                    'address_level2' => true,
+                    'address_level4' => true,
+                ];
+
+                // Outros países: apenas país obrigatório
+                $config['requiredAddressFieldsOther'] = [
+                    'address_level0' => true,
+                ];
+
+                $field->config = $config;
+                $field->save(true);
+            }
+        );
+    },
+
+    'Normalização de CPF e CNPJ em registration_meta' => function () {
+        
+        $app = App::i();
+        $conn = $app->em->getConnection();
+
+        // 1) Listar apenas campos que são definitivamente CPF ou CNPJ (campo direto ou agent-owner-field documento/cpf/cnpj)
+        $rows = $conn->fetchAll("
+            SELECT id, opportunity_id, field_type, config
+            FROM registration_field_configuration
+            WHERE field_type IN ('cpf', 'cnpj')
+               OR (field_type = 'agent-owner-field' AND config IS NOT NULL)
+        ");
+
+        $fieldsByOpportunity = [];
+        foreach ($rows as $row) {
+            $fieldId = (int) $row['id'];
+            $oppId = (int) $row['opportunity_id'];
+            $fieldType = $row['field_type'];
+
+            if ($fieldType === 'cpf') {
+                $docType = 'cpf';
+            } elseif ($fieldType === 'cnpj') {
+                $docType = 'cnpj';
+            } else {
+                $config = is_string($row['config']) ? json_decode($row['config'], true) : $row['config'];
+                $entityField = $config['entityField'] ?? null;
+                if (!in_array($entityField, ['documento', 'cpf', 'cnpj'], true)) {
+                    continue;
+                }
+                $docType = 'documento'; // CPF ou CNPJ conforme o valor (11 ou 14 dígitos)
+            }
+
+            if (!isset($fieldsByOpportunity[$oppId])) {
+                $fieldsByOpportunity[$oppId] = [];
+            }
+            $fieldsByOpportunity[$oppId][] = ['field_id' => $fieldId, 'key' => 'field_' . $fieldId, 'doc_type' => $docType];
+        }
+
+        if (empty($fieldsByOpportunity)) {
+            return;
+        }
+
+        $opportunityIds = array_keys($fieldsByOpportunity);
+        $oppIdsList = implode(',', array_map('intval', $opportunityIds));
+
+        $maskCpf = function ($digits) {
+            return substr($digits, 0, 3) . '.' . substr($digits, 3, 3) . '.' . substr($digits, 6, 3) . '-' . substr($digits, 9, 2);
+        };
+        $maskCnpj = function ($digits) {
+            return substr($digits, 0, 2) . '.' . substr($digits, 2, 3) . '.' . substr($digits, 5, 3) . '/' . substr($digits, 8, 4) . '-' . substr($digits, 12, 2);
+        };
+
+        DB_UPDATE::enqueue(Registration::class, "opportunity_id IN ({$oppIdsList})", function (Registration $registration) use ($app, $conn, $fieldsByOpportunity, $maskCpf, $maskCnpj) {
+            $regId = (int) $registration->id;
+            $oppId = (int) $registration->opportunity->id;
+            $fields = $fieldsByOpportunity[$oppId] ?? [];
+            if (empty($fields)) {
+                return;
+            }
+
+            foreach ($fields as $field) {
+                $key = $field['key'];
+                $docType = $field['doc_type'];
+
+                $meta = $conn->fetchAssoc(
+                    'SELECT value FROM registration_meta WHERE object_id = :oid AND key = :key',
+                    ['oid' => $regId, 'key' => $key]
+                );
+                if (!$meta || $meta['value'] === '' || $meta['value'] === null) {
+                    continue;
+                }
+
+                $value = trim((string) $meta['value']);
+                $digits = preg_replace('/[^0-9]/', '', $value);
+                $len = strlen($digits);
+
+                // Só alterar se for exatamente 11 (CPF) ou 14 (CNPJ) dígitos e válido
+                if ($len === 11) {
+                    if ($docType !== 'cnpj' && \Respect\Validation\Validator::cpf()->validate($digits)) {
+                        $masked = $maskCpf($digits);
+                        if ($masked !== $value) {
+                            $conn->executeQuery(
+                                'UPDATE registration_meta SET value = :val WHERE object_id = :oid AND key = :key',
+                                ['val' => $masked, 'oid' => $regId, 'key' => $key]
+                            );
+                            echo "\n" . ("registration_meta: inscrição {$regId}, key {$key}: CPF normalizado com máscara. {$digits} --- {$masked}");
+                        }
+                    }
+                } elseif ($len === 14) {
+                    if ($docType !== 'cpf' && \Respect\Validation\Validator::cnpj()->validate($digits)) {
+                        $masked = $maskCnpj($digits);
+                        if ($masked !== $value) {
+                            $conn->executeQuery(
+                                'UPDATE registration_meta SET value = :val WHERE object_id = :oid AND key = :key',
+                                ['val' => $masked, 'oid' => $regId, 'key' => $key]
+                            );
+                            echo "\n" . ("registration_meta: inscrição {$regId}, key {$key}: CNPJ normalizado com máscara. {$digits} --- {$masked}");
+                        }
+                    }
+                }
+            }
+        });
+    },
+
 ];

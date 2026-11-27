@@ -41,18 +41,18 @@ $entity = $this->controller->requestedEntity;
             <?php $this->applyTemplateHook('registration-list-actions', 'after', ['entity' => $entity]); ?>
         </template>
         <div class="col-12"> 
-            <entity-table controller="opportunity" endpoint="findRegistrations" :identifier="identifier" type="registration" :query="query" :limit="100" :sort-options="sortOptions" :order="order" :select="select" :headers="headers" phase:="phase" required="number,options" :visible="visible" @clear-filters="clearFilters" @remove-filter="removeFilter($event)" show-index :hide-filters="hideFilters" :hide-sort="hideSort" :hide-actions='hideActions' :hide-header="hideHeader">
+            <entity-table controller="opportunity" endpoint="findRegistrations" :identifier="identifier" type="registration" :query="query" :limit="100" :sort-options="sortOptions" :order="order" :select="select" :headers="headers" phase:="phase" :columns-config-entity="phase" required="number,options" :visible="visible" @clear-filters="clearFilters" @remove-filter="removeFilter($event)" show-index :hide-filters="hideFilters" :hide-sort="hideSort" :hide-actions='hideActions' :hide-header="hideHeader">
                 <template #title>
                     <slot name="title"></slot>
                 </template>
                 
                 <?php $this->applyTemplateHook('registration-list-actions-entity-table', 'before', ['entity' => $entity]); ?>
-                <template v-if="!hideActions" #actions="{entities,filters}">
+                <template v-if="!hideActions" #actions="{entities,filters,spreadsheetQuery}">
                     <div class="opportunity-registration-table__actions">
                         <h4 class="bold"><?= i::__('Ações:') ?></h4>
                         <div class="opportunity-registration-table__actions-buttons">
                         <?php $this->applyTemplateHook('registration-list-actions-entity-table', 'begin', ['entity' => $entity]); ?>
-                            <mc-export-spreadsheet :owner="phase" endpoint="registrations" :params="{entityType: 'registration', '@select': select, '@order': order, query}" group="registrations-spreadsheets"></mc-export-spreadsheet>
+                            <mc-export-spreadsheet :owner="phase" endpoint="registrations" :params="{entityType: 'registration', '@select': spreadsheetQuery['@select'], '@order': spreadsheetQuery['@order'], query: spreadsheetQuery}" group="registrations-spreadsheets"></mc-export-spreadsheet>
                         <?php $this->applyTemplateHook('registration-list-actions-entity-table', 'end', ['entity' => $entity]); ?>
                         </div>
                     </div>
@@ -79,12 +79,13 @@ $entity = $this->controller->requestedEntity;
                 </template>
 
                 <template #attachments={entity}>
-                    <a v-if="entity.files?.zipArchive?.url" :href="entity.files?.zipArchive?.url"><?= i::__('Anexo') ?></a>
+                    <mc-loading :condition="downloadZipInLoanding(entity)"></mc-loading>
+                    <a href="#"  v-if="!downloadZipInLoanding(entity)" @click.prevent="generateOrDownloadZip(entity)" ><?= i::__('Anexo') ?></a>
                 </template>
 
                 <template #status="{entity}">
                     <mc-select v-if="!statusNotEditable" small :default-value="entity.status" @change-option="setStatus($event, entity)">
-                        <mc-status v-for="item in statusDict" :value="item.value" :status-name="item.label"></mc-status>
+                        <mc-status v-for="item in statusDict" :value="item.value" :status-name="item"></mc-status>
                     </mc-select>
                     
                     <mc-status v-if="statusNotEditable" :value="getStatus(entity.status).status" :status-name="getStatus(entity.status).label"></mc-status>
@@ -111,6 +112,22 @@ $entity = $this->controller->requestedEntity;
                     <span v-else>&nbsp;</span>
                 </template>
 
+                <template #appliedPointReward="{entity}">
+                    <template v-if="entity.appliedPointReward && entity.appliedPointReward.raw != null">
+                        <div class="entity-table__applied-point-reward">
+                            <template v-if="entity.appliedPointReward.type === 'fixed'">
+                                <span v-if="entity.appliedPointReward.fixed > 0">+{{ entity.appliedPointReward.fixed }} pt(s)</span>
+                                <span v-else>&nbsp;</span>
+                            </template>
+                            <template v-else>
+                                <span v-if="entity.appliedPointReward.percentage > 0">{{ entity.appliedPointReward.percentage }}%</span>
+                                <span v-else>&nbsp;</span>
+                            </template>
+                        </div>
+                    </template>
+                    <span v-else>&nbsp;</span>
+                </template>
+
                 <template #consolidatedResult="{entity}"> 
                     {{consolidatedResultToString(entity)}}
                 </template>
@@ -123,9 +140,19 @@ $entity = $this->controller->requestedEntity;
                     <a :href="entity.singleUrl">{{entity.number}}</a>
                 </template>
 
+                 <template #singleUrl="{entity}">
+                    <a :href="entity.singleUrl">{{entity.singleUrl}}</a>
+                </template>
+
                 <template #eligible="{entity}">
-                    <span v-if="entity.eligible"><?= i::__('Sim') ?></span>
-                    <span v-else> &nbsp; </span>
+                    <span v-if="entity.eligible === true || entity.eligible === 'true' || entity.eligible === 1"><?= i::__('Sim') ?></span>
+                    <span v-else-if="entity.eligible === false || entity.eligible === 'false' || entity.eligible === 0"><?= i::__('Não') ?></span>
+                    <span v-else>&nbsp;</span>
+                </template>
+
+                <template #appliedForQuota="{entity}">
+                    <span v-if="entity.appliedForQuota === true || entity.appliedForQuota === 'true' || entity.appliedForQuota === 1 || entity.appliedForQuota === '1'"><?= i::__('Sim') ?></span>
+                    <span v-else><?= i::__('Não') ?></span>
                 </template>
 
                 <template #editable={entity}>
@@ -156,6 +183,10 @@ $entity = $this->controller->requestedEntity;
                             </button>
                         </template>
                     </registration-editable-fields>
+                </template>
+
+                <template #goalStatuses="{entity}">
+                    <a v-if="entity.goalStatuses" :href="entity.singleUrl + '#ficha'" class="entity-table__goals">{{entity.goalStatuses['10']}}/{{entity.goalStatuses.numGoals}} <?= i::__('concluídas') ?></a>
                 </template>
 
             </entity-table>

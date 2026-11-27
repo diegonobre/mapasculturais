@@ -66,6 +66,12 @@ app.component('registration-actions', {
     },
 
     computed: {
+        additionalValidateFields() {
+            return $MAPAS.config.registrationActions.additionalValidateFields;
+        },
+        additionalValidateFieldsSteps() {
+            return $MAPAS.config.registrationActions.additionalValidateFieldsSteps;
+        },
         canSubmit() {
             return this.isLastStep && this.isValidated;
         },
@@ -95,6 +101,9 @@ app.component('registration-actions', {
                     const stepErrors = this.validationErrors[step._id];
                     const fieldEntries = Object.entries(stepErrors);
                     fieldEntries.sort(([a], [b]) => {
+                        // A pergunta de cotas fica acima do formulário, então vem primeiro
+                        if (a === 'appliedForQuota') return -1;
+                        if (b === 'appliedForQuota') return 1;
                         return Math.sign(this.fieldsMap[a]?.displayOrder - this.fieldsMap[b]?.displayOrder);
                     });
                     errors[stepIndex] = Object.fromEntries(fieldEntries);
@@ -106,6 +115,15 @@ app.component('registration-actions', {
         step() {
             return this.steps[this.stepIndex];
         },
+
+        confirmButtonTitle() {
+            return this.registration.opportunity.isAppealPhase 
+                ? this.text('Quer enviar seu recurso?') 
+                : this.text('Quer enviar sua inscrição?');
+        },
+         formatEditableUntil() {
+            return `${this.registration.editableUntil.date('numeric year')} às ${this.registration.editableUntil.time('2-digit')}`
+        }
     },
 
     watch: {
@@ -117,6 +135,13 @@ app.component('registration-actions', {
     },
 
     methods: {
+        canSeeAction() {
+            if(this.registration.currentUserPermissions.modify || this.registration.currentUserPermissions.sendEditableFields) {
+               return true;
+            }
+
+            return false;
+        },
         toggleErrors() {
             this.hideErrors = !this.hideErrors;
         },
@@ -136,6 +161,10 @@ app.component('registration-actions', {
 
             if (field == 'space') {
                 return this.text('Espaço');
+            }
+
+            if (field == 'appliedForQuota') {
+                return this.text('Vai concorrer às cotas?');
             }
 
             if (field == 'workplan') {
@@ -188,13 +217,12 @@ app.component('registration-actions', {
             let result;
             try {
                 this.registration.disableMessages();
-                await this.save();
-                this.registration.enableMessages();
-
                 result = await this.validate();
             } catch(error) {
                 console.error(error);
                 result = false;
+            } finally {
+                this.registration.enableMessages();
             }
 
             if(!result) { 
@@ -226,8 +254,11 @@ app.component('registration-actions', {
             const messages = useMessages();
 
             try {
-                await this.save();
-                const success = await this.registration.POST('validateEntity', {processingMessage: this.text('Validando')});
+                if (!await this.save()) {
+                    return false;
+                }
+                const data = this.getRegistrationPayloadForValidation();
+                const success = await this.registration.POST('validateEntity', { data, processingMessage: this.text('Validando') });
 
                 if (success) {
                     this.isValidated = true;
@@ -243,6 +274,53 @@ app.component('registration-actions', {
                 }
                 return false;
             }
+        },
+
+        async saveRelatedFormData() {
+            const promises = [];
+            globalThis.dispatchEvent(new CustomEvent('registration.beforeSave', {
+                detail: {
+                    registrationId: this.registration.id,
+                    promises,
+                },
+            }));
+            await Promise.all(promises);
+        },
+
+        getRegistrationPayloadForValidation() {
+            const r = this.registration;
+            const payload = {};
+            const keys = new Set(['category', 'proponentType', 'range', 'projectName']);
+            (this.fields || []).forEach(f => { if (f.fieldName) keys.add(f.fieldName); });
+            (this.additionalValidateFields || []).forEach(k => keys.add(k));
+
+            const normalizeValueForValidation = (val) => {
+                // Datas no front usam McDate, mas o validateEntity espera string "Y-m-d"
+                if (val instanceof McDate) {
+                    return val.sql('date');
+                }
+
+                // Quando um McDate é serializado por JSON vira { locale, _date: <string|Date> }
+                if (val && typeof val === 'object' && ('_date' in val)) {
+                    const raw = val._date;
+                    if (raw instanceof Date) {
+                        return new McDate(raw).sql('date');
+                    }
+                    if (typeof raw === 'string' && raw) {
+                        return new McDate(raw).sql('date');
+                    }
+                }
+
+                return val;
+            };
+
+            keys.forEach(key => {
+                if (!Object.prototype.hasOwnProperty.call(r, key) || key.indexOf('$$') === 0) return;
+                const val = normalizeValueForValidation(r[key]);
+                if (val === undefined) return;
+                payload[key] = (typeof val === 'object' && val !== null) ? JSON.parse(JSON.stringify(val)) : val;
+            });
+            return payload;
         },
 
         getEmptyValidationState() {
@@ -273,12 +351,18 @@ app.component('registration-actions', {
                     }
                 }
 
-                if (['workplan', 'goal', 'delivery', 'projectDuration', 'culturalArtisticSegment'].includes(fieldName)) {
+                // A pergunta de cotas aparece no topo de todas as etapas; o erro vai para a primeira
+                if (fieldName === 'appliedForQuota') {
+                    validationErrors[Object.keys(validationErrors)[0]][fieldName] = fieldError;
+                }
+
+                if (this.additionalValidateFields.includes(fieldName)) {
                     const keys = Object.keys(validationErrors);
                     const lastStep = keys[keys.length - 1]; 
 
                    if (this.fields.length > 0) {
-                        validationErrors[lastStep][fieldName] = fieldError;
+                        const step = this.additionalValidateFieldsSteps?.[fieldName] || lastStep;
+                        validationErrors[step][fieldName] = fieldError;
                    } else {
                         validationErrors[Object.keys(validationErrors)[0]][fieldName] = fieldError;
                    }
@@ -290,6 +374,7 @@ app.component('registration-actions', {
         async save() {
             try{
                 await this.registration.save(0, false, true);
+                await this.saveRelatedFormData();
                 this.isValidated = false;
                 this.validationErrors = this.getEmptyValidationState();
                 return true;

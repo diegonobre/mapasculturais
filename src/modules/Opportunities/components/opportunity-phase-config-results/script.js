@@ -14,13 +14,21 @@ app.component('opportunity-phase-config-results' , {
         phases: {
             type: Array,
             required: true
-        }
+        },
+
+        tab: {
+            type: String,
+        },
     },
 
     computed: {
         firstPhase() {
             return this.phases[0];
-        }
+        },
+
+        seals() {
+            return $MAPAS.config?.opportunityPhaseConfigResults?.seals;
+        },
     },
 
     methods: {

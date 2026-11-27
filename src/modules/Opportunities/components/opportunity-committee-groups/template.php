@@ -18,10 +18,9 @@ $this->import('
     mc-toggle
     mc-alert
     opportunity-evaluation-committee
-    opportunity-registration-filter-configuration
+    registration-distribution-rule
 ');
 
-$next_execution_time = EvaluationMethod::getNextRedistributionDateTime();
 ?>
 
 <div class="opportunity-committee-groups">
@@ -63,10 +62,10 @@ $next_execution_time = EvaluationMethod::getNextRedistributionDateTime();
         <mc-tab v-for="([groupName, relations], index) in Object.entries(entity.relatedAgents)" :key="index" :label="groupName == '@tiebreaker' ? '<?= $this->text('tiebreaker', i::__('Voto de minerva')) ?>' : groupName" :slug="String(index)">
             <div class="opportunity-committee-groups__group">
                 <div class="opportunity-committee-groups__edit-group field">
-                    <label v-if="groupName != '@tiebreaker'" for="newGroupName"><?= i::__('Título da comissão') ?></label>
+                    <!-- <label v-if="groupName != '@tiebreaker'" :for="`newGroupName${index}`"><?= i::__('Título da comissão') ?></label> -->
 
                     <div class="opportunity-committee-groups__edit-group--field">
-                        <input v-if="groupName != '@tiebreaker'" id="newGroupName" class="input" type="text" @change="renameTab($event, index, groupName);" placeholder="<?= i::esc_attr__('Digite o novo nome do grupo') ?>" />
+                        <!-- <input v-if="groupName != '@tiebreaker'" id="newGroupName${index}`" class="input" type="text" @change="renameTab($event, index, groupName);" placeholder="<?=  i::esc_attr__('Digite o novo nome da comissão') ?>" /> -->
                         <mc-confirm-button @confirm="removeGroup(groupName)">
                             <template #button="modal">
                                 <a class="button button--delete button--icon button--sm" @click="modal.open()">
@@ -75,7 +74,20 @@ $next_execution_time = EvaluationMethod::getNextRedistributionDateTime();
                                 </a>
                             </template>
                             <template #message="message">
-                                <?php i::_e('Remover comissão de avaliadores?') ?>
+                                <div class="grid-12">
+                                    <div class="col-12">
+                                        <p>
+                                            <?= i::__('Você tem certeza que deseja remover a comissão <strong>{{groupName}}</strong>?') ?>
+                                        </p>
+                                    </div>
+                                    <div class="col-12">
+                                        <p>
+                                            <mc-alert type="danger">
+                                                <strong><?= i::__('ATENÇÃO') ?>: </strong> <?= i::__('TODAS as avaliações realizadas pelos avaliadores desta comissão serão') ?> <strong><?= i::__('excluídas permanentemente') ?></strong>.
+                                            </mc-alert>
+                                        </p>
+                                    </div>
+                                </div>
                             </template>
                         </mc-confirm-button>
                     </div> 
@@ -89,7 +101,7 @@ $next_execution_time = EvaluationMethod::getNextRedistributionDateTime();
                             label="<?= i::__('Limitar número de avaliadores por inscrição') ?>"
                         />
                         <input v-if="entity.valuersPerRegistration[groupName] !== undefined" 
-                            v-model="entity.valuersPerRegistration[groupName]" type="number" @change="autoSave()"/>
+                            v-model="entity.valuersPerRegistration[groupName]" type="number" min="0" @change="validateAndSave($event, groupName)"/>
 
                         <div v-if="entity.valuersPerRegistration[groupName] !== undefined" class="has-info">
                             <mc-toggle 
@@ -109,16 +121,21 @@ $next_execution_time = EvaluationMethod::getNextRedistributionDateTime();
                             @update:modelValue="enableRegisterFilterConf($event, groupName)"
                             label="<?= i::__('Configuração filtro de inscrição para avaliadores/comissão') ?>"
                         />
-                        <opportunity-registration-filter-configuration 
-                            v-if="entity.fetchFields[groupName] !== undefined" 
-                            :entity="entity"
-                            v-model:default-value="entity.fetchFields[groupName]"
-                            :excludeFields="globalExcludeFields"
-                            @updateExcludeFields="updateExcludedFields('global', $event)"
-                            useDistributionField
-                            is-global
-                        >
-                        </opportunity-registration-filter-configuration>
+                        <mc-alert v-if="hasFilterConfiguration(groupName)" type="warning">
+                            <div>
+                                {{filterConfigurationWarning}}
+                            </div>
+                        </mc-alert>
+
+                        <registration-distribution-rule
+                            v-if="entity.fetchFields[groupName] !== undefined"
+                            :key="groupName"
+                            :opportunity="entity.opportunity"
+                            v-model="distributionRules[groupName]"
+                            @update:modelValue="onDistributionRuleChange($event, groupName)"
+                            :disable-filters="distributionDisabledFilters[groupName]"
+                            enable-filter-by-sent-timestamp
+                        />
                     </div>
 
                     <div class="field">
@@ -158,10 +175,8 @@ $next_execution_time = EvaluationMethod::getNextRedistributionDateTime();
         </div>
 
         <template v-else>
-            <div class="opportunity-committee-groups__distribution-content">
-                <mc-alert type="warning" >
-                    <?= sprintf(i::__('As inscrições serão distribuidas para as comissões às %s'), $next_execution_time->format('H:i')); ?>
-                </mc-alert>
+            <div class="opportunity-committee-groups__distribution-config">
+                <entity-field :entity="entity" prop="distributionConfiguration":autosave="300"></entity-field>
             </div>
 
             <div class="opportunity-committee-groups__distribution-actions">

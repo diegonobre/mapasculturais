@@ -102,7 +102,7 @@ app.component('mc-entities', {
             }
 
             if (this.ids) {
-                query[this.API.$PK] = 'IN(' + this.ids.join(',') + ')'
+                query[this.api.$PK] = 'IN(' + this.ids.join(',') + ')'
             }
 
             if (this.order) {
@@ -122,7 +122,7 @@ app.component('mc-entities', {
         },
 
         getDataFromApi() {
-            const query = {...this.query};
+            const query = {...this.query, ...this.entities.query};
 
             this.$emit('loading', query);
 
@@ -153,20 +153,25 @@ app.component('mc-entities', {
         },
 
         refresh(debounce) {
-            if (this.timeout) {
-                clearTimeout(this.timeout);
-            }
+            if (this.entities.loading) {
+                return;
+            };
 
+            if (this.timeout) {
+                clearTimeout(this.timeout)
+            };
+        
             this.timeout = setTimeout(() => {
                 this.entities.splice(0);
                 this.entities.loading = true;
-
+        
                 this.getDataFromApi()
                     .then(() => {
                         this.entities.loading = false;
                     })
             }, debounce);
         },
+        
 
         loadMore() {
             if (!this.limit) {

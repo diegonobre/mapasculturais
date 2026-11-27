@@ -6,9 +6,12 @@
 use MapasCulturais\i;
 
 $this->layout = 'entity';
-$this->addOpportunityPhasesToJs();
+
+$this->addOpportunityPhasesToJs($entity);
+
 $this->import('
     entity-field
+    mc-alert
     mc-confirm-button
     mc-modal
     mc-tab
@@ -68,7 +71,7 @@ $this->import('
                         <h4 class="input-group__title"><?= i::__("Habilitar solicitação de imagem de perfil") ?></h4>
                         <h6 class="input-group__subtitle"><?= i::__("Solicita ao usuário que insira a imagem de perfil no formulário de inscrição") ?></h6>
                         <div class="input-group__inputs">
-                            <entity-field class="input-box" :entity="entity" hide-required  :editable="true" prop="requestAgentAvatar" :autosave="3000"></entity-field>
+                            <entity-field :classes="'input-box'" :entity="entity" hide-required :editable="true" prop="requestAgentAvatar" :autosave="3000"></entity-field>
                         </div>
                     </div>
                 </template>
@@ -82,8 +85,11 @@ $this->import('
                     <div class="input-group">
                         <h4 class="input-group__title"><?= i::__("Habilitar pergunta 'Vai concorrer às cotas'") ?></h4>
                         <div class="input-group__inputs">
-                            <entity-field class="input-box" :entity="entity" hide-required  :editable="true" prop="enableQuotasQuestion" :autosave="3000"></entity-field>
+                            <entity-field :classes="'input-box'" :entity="entity" hide-required :editable="true" prop="enableQuotasQuestion" :autosave="3000"></entity-field>
                         </div>
+                        <mc-alert v-if="entity.enableQuotasQuestion && entity.enableQuotasQuestion !== '0' && entity.enableQuotasQuestion !== 'false'" type="warning">
+                            <?= i::__("O sistema já inclui automaticamente a pergunta \"Vai concorrer às cotas?\" no formulário de inscrição. Não crie outro campo com essa pergunta: só a resposta da pergunta do sistema é considerada na apuração das cotas. Para campos que dependem dessa resposta (ex.: \"Qual cota?\"), use a pergunta do sistema como condição.") ?>
+                        </mc-alert>
                     </div>
                 </template>
             </mc-card>
@@ -97,9 +103,9 @@ $this->import('
     </div>
 
     <div class="col-12">
-        <mc-tabs ref="tabs" v-model:draggable="stepsWithSlugs">
+        <mc-tabs ref="tabs" v-model:draggable="draggableSteps">
             <template #default>
-                <mc-tab v-for="({ step, slug }, index) of stepsWithSlugs" :label="`${index + 1}. ${step.name ?? ''}`" :key="step.id" :slug="slug" :cache="false">
+                <mc-tab v-for="(step, index) of steps" :label="`${index + 1}. ${step.name ?? ''}`" :key="step.id" :slug="`section-${step.id}`" :cache="false">
                     <div class="form-builder__step-config">
                         <div>
                             <entity-field :entity="step" prop="name" :autosave="1000" hide-required></entity-field>
@@ -128,7 +134,7 @@ $this->import('
             </template>
 
             <template #after-tablist>
-                <mc-modal title="<?php i::_e('Criar etapa') ?>">
+                <mc-modal teleport="body" title="<?php i::_e('Criar etapa') ?>">
                     <template #button="modal">
                         <button type="button" class="button button--primary button--icon form-builder__add-step" @click="modal.open()">
                             <mc-icon name="add"></mc-icon>

@@ -8,14 +8,15 @@ use MapasCulturais\i;
 
 $this->import('
     entity-field
+    mc-alert
     mc-confirm-button
     mc-link
 ');
 ?>
 <div class="col-12">
     <div class="grid-12 opportunity-phase-publish-date-config">
-        <h4 class="bold col-12">  <?= i::__("Publicação de Resultados") ?></h4>
-        <div v-if="phase.publishedRegistrations" class="published">
+        <h3 class="bold col-12" v-if="!hideTitle">  <?= i::__("Publicação de Resultados") ?></h3>
+        <div v-if="phase.publishedRegistrations && !firstPhase?.isContinuousFlow" class="published">
             <div class="col-4">
                 <mc-confirm-button :message="text('despublicar')" @confirm="unpublishRegistration()">
                     <template #button="modal">
@@ -27,10 +28,10 @@ $this->import('
             </div>
         </div>
 
-        <div v-if="!phase.publishedRegistrations && !firstPhase?.isContinuousFlow" class="grid-12 col-12 notPublished opportunity-phase-publish-date-config__content">
-            <div class="opportunity-phase-publish-date-config__left col-4">
+        <div v-if="(!phase.publishedRegistrations && !firstPhase?.isContinuousFlow) || (firstPhase?.isContinuousFlow && firstPhase?.hasEndDate && phase.isLastPhase)" class="grid-12 col-12 notPublished opportunity-phase-publish-date-config__content">
+            <div class="opportunity-phase-publish-date-config__left" :class="{ 'col-6': phase.appealPhase, 'col-4': !phase.appealPhase }">
 
-                <entity-field v-if="!hideDatepicker" :entity="phase" prop="publishTimestamp" :autosave="3000" :min="minDate" :max="maxDate" classes="col-4 opportunity-phase-publish-date-config__date"></entity-field>
+                <entity-field v-if="!hideDatepicker" :key="publishTimestampFieldKey" :entity="phase" prop="publishTimestamp" :autosave="3000" @change="onPublishTimestampChange()" classes="col-4 opportunity-phase-publish-date-config__date"></entity-field>
                 
                 <div v-if="hideDatepicker && phase.publishTimestamp" class="col-4 msgpub-date">
                     <h5 v-if="phase.autoPublish && hideCheckbox">
@@ -70,14 +71,30 @@ $this->import('
                 prop="autoPublish" 
                 type="checkbox" 
                 :autosave="3000" 
-                :disabled="!phase.publishTimestamp" 
+                :disabled="!phase.publishTimestamp || (!phase.autoPublish && isPublishTimestampPast)" 
                 hideRequired 
                 classes="col-4 opportunity-phase-publish-date-config__checkbox"></entity-field>
-            
+
+            <mc-alert v-if="!hideDatepicker && publishTimestampPastError" class="col-12" type="danger">
+                <?= i::__("Esse horário já passou. Escolha um horário no futuro, por exemplo:") ?>
+                <button type="button" class="button button--primary-outline button--sm" @click="useSuggestedPublishDate()">
+                    <?= sprintf(i::__("Usar %s"), "{{suggestedPublishTime}}") ?>
+                </button>
+            </mc-alert>
+
+            <mc-alert v-if="!hideCheckbox" class="col-12" type="warning">
+                <?= sprintf(
+                        i::__("Escolha um horário no futuro para agendar a publicação automática. Exemplo: agora são %s de %s, então escolha %s ou mais tarde."),
+                        "{{exampleTimeNow}}",
+                        "{{exampleDateNow}}",
+                        "{{exampleTimePlusOne}}"
+                ) ?>
+            </mc-alert>
+
         </div>
         
         <div class="col-12 grid-12" v-if="true">
-            <div class="col-12" v-if="phase.evaluationMethodConfiguration">
+            <div class="col-12" v-if="phase.evaluationMethodConfiguration  && !phase.isAppealPhase">
                 <entity-field :entity="phase.evaluationMethodConfiguration" prop="publishEvaluationDetails" type="checkbox" :autosave="300" ></entity-field>
             </div>
             <div class="col-12" v-if="phase.evaluationMethodConfiguration">

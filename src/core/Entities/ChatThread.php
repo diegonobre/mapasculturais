@@ -27,6 +27,8 @@ class ChatThread extends \MapasCulturais\Entity
 {
     use Traits\EntityAgentRelation;
 
+    const STATUS_CLOSED = 2;
+
     /**
      * @var integer
      *
@@ -96,7 +98,7 @@ class ChatThread extends \MapasCulturais\Entity
     /**
      * @var \MapasCulturais\Entities\ChatThreadAgentRelation[] Agent Relations
      *
-     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\ChatThreadAgentRelation", mappedBy="owner", cascade={"remove"}, orphanRemoval=true)
+     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\ChatThreadAgentRelation", mappedBy="owner", cascade={"remove"})
      * @ORM\JoinColumn(name="id", referencedColumnName="object_id", onDelete="CASCADE")
     */
     protected $__agentRelations;

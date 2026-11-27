@@ -6,12 +6,14 @@
 
 use MapasCulturais\i;
 
+
+
 $entity = $this->controller->requestedEntity;
 ?>
-<div v-if="registration.consolidatedDetails.sentEvaluationCount" class="registration-results">  
-    <mc-modal :title="`${phase.name} - ${registration.number}`" classes="registration-results__modal">
+<div v-if="showEvaluationDetails" class="registration-results">  
+    <mc-modal :title="modalTitle" classes="registration-results__modal registration-results__modal--with-chat">
         <template #default>
-            <?php foreach($app->getRegisteredEvaluationMethods() as $evaluation_method): ?>
+            <?php foreach($app->getRegisteredEvaluationMethods(true) as $evaluation_method): ?>
                 <div v-if="phase.type?.id == '<?= $evaluation_method->slug ?>'" class="registration-results__content">
                     <?php $this->part($evaluation_method->slug . '/evaluations-details') ?>
                 </div>
@@ -19,7 +21,7 @@ $entity = $this->controller->requestedEntity;
         </template>
 
         <template #button="modal">
-            <button class="button button--primary button--sm button--large" @click="modal.open()"><?php i::_e('Exibir detalhamento') ?></button>
+            <button  class="button button--primary button--sm button--large" @click="modal.open()"><?php i::_e('Exibir detalhamento') ?></button>
         </template>
     </mc-modal>
 </div>

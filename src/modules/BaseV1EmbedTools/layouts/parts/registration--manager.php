@@ -16,7 +16,7 @@ use MapasCulturais\i;
     <div class="placeholder" ng-click="filter_dropdown = ''"><?php i::_e("Colunas Habilitadas:") ?></div>
     <div class="submenu-dropdown" style="background: #fff;">
         <div class="filter-search" style="padding: 5px;">
-            <input type="text" ng-model="filter_dropdown" style="width:100%;" placeholder="Busque pelo nome dos campos do formulário de inscrição e selecione as colunas visíveis" />
+            <input type="text" ng-model="filter_dropdown" style="width:100%;" placeholder="<?= i::__('Busque pelo nome dos campos do formulário de inscrição e selecione as colunas visíveis') ?>" />
         </div>
         <ul class="filter-list">
             <li ng-repeat="field in data.defaultSelectFields | filter:filter_dropdown" ng-if="field.required" ng-class="{'selected':isSelected(data.registrationTableColumns, field.fieldName)}" ng-click="toggleSelectionColumn(data.registrationTableColumns, field.fieldName)">
@@ -120,7 +120,7 @@ use MapasCulturais\i;
                     </p>
                 </td>
                 <td ng-show="data.registrationTableColumns.attachments" ng-if="data.entity.registrationFileConfigurations.length > 0" class="registration-attachments-col">
-                    <a ng-if="reg.files.zipArchive.url" class="icon icon-download" href="{{reg.files.zipArchive.url}}" rel='noopener noreferrer'>
+                    <a  class="icon icon-download" :href="reg.getUrl('createZipFiles')" rel='noopener noreferrer'>
                         <div class="screen-reader-text"><?php i::_e("Baixar arquivos"); ?></div>
                     </a>
                 </td>

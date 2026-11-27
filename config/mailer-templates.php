@@ -51,6 +51,14 @@ return [
             'title' => i::__("Sua inscrição avaçou de fase"),
             'template' => 'start_data_collection_phase.html'
         ],
+        'start_reporting_phase' => [
+            'title' => i::__("Sua inscrição entrou na fase de monitoramento"),
+            'template' => 'start_reporting_phase.html'
+        ],
+        'start_final_reporting_phase' => [
+            'title' => i::__("Sua inscrição entrou na fase de prestação de informações"),
+            'template' => 'start_final_reporting_phase.html'
+        ],
         'export_spreadsheet' => [
             'title' => i::__("Planilha disponível"),
             'template' => 'export_spreadsheet.html'
@@ -58,6 +66,14 @@ return [
         'export_spreadsheet_error' => [
             'title' => i::__("Houve um erro com o arquivo"),
             'template' => 'export_spreadsheet_error.html'
+        ],
+        'import_fields_success' => [
+            'title' => i::__("Importação de formulário concluída"),
+            'template' => 'import_fields_success.html'
+        ],
+        'import_fields_error' => [
+            'title' => i::__("Erro na importação de formulário"),
+            'template' => 'import_fields_error.html'
         ],
         'send_registration' => [
             'title' => i::__("Inscrição enviada"),
@@ -70,6 +86,18 @@ return [
         'claim_certificate' => [
             'title' => i::__("Certificado de solicitação de recurso"),
             'template' => 'claim_certificate.html'
+        ],
+        'request_account_deletion' => [
+            'title' => i::__('Solicitação de exclusão de conta'),
+            'template' => 'request_account_deletion.html'
+        ],
+        'account_deletion_partial' => [
+            'title' => i::__('Confirmação de exclusão parcial do cadastro'),
+            'template' => 'account_deletion_partial.html'
+        ],
+        'account_deletion_permanent' => [
+            'title' => i::__('Confirmação de exclusão permanente do cadastro'),
+            'template' => 'account_deletion_permanent.html'
         ],
 
     ]

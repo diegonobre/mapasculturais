@@ -11,11 +11,12 @@ $iconset = [
     'agent' => 'fa-solid:user-friends',
     'agent-1' => 'fa-solid:user',
     'agent-2' => 'fa-solid:user-friends',
-  
+
     'space' => 'clarity:building-solid',
     'event' => 'bxs:calendar-event',
     'project' => 'ri:file-list-2-fill',
     'opportunity' => 'mdi:lightbulb-on',
+    'seal' => 'mdi:seal-variant',
 
     // redes sociais
     'facebook' => 'brandico:facebook',
@@ -30,6 +31,7 @@ $iconset = [
     'whatsapp' => 'akar-icons:whatsapp-fill',
     'vimeo' => 'brandico:vimeo',
     'youtube' => 'akar-icons:youtube-fill',
+    'fediverso' => 'ri-fediverse-line',
 
 
     // IMPORTANTE: manter ordem alfabética
@@ -54,9 +56,14 @@ $iconset = [
     'arrowPoint-right' => 'fe:arrow-right',
     'attachment' => 'mdi:paperclip',
     'arrowPoint-up' => 'fe:arrow-up',
+    'bars' => 'fa-solid:bars',
     'brPhone' => 'mdi:phone',
+    'chart-area' => 'fa-solid:chart-area',
+    'chart-bar' => 'fa-solid:chart-bar',
+    'chart-pie' => 'fa-solid:chart-pie',
     'check' => 'material-symbols:check-circle',
     'checkbox' => 'tabler:checkbox',
+    'change' => 'basil:exchange-outline',
     'circle' => 'material-symbols:circle',
     'circle-checked' => 'material-symbols:check-circle-rounded',
     'clock' => 'fluent:clipboard-clock-20-filled',
@@ -94,6 +101,8 @@ $iconset = [
     'link' => 'cil:link-alt',
     'list' => 'ci:list-ul',
     'loading' => 'eos-icons:three-dots-loading',
+    'lock-open' => 'flowbite:lock-solid',
+    'lock-closed' => 'flowbite:lock-open-solid',
     'login' => 'icon-park-outline:login',
     'logout' => 'ri:logout-box-line',
     'magnifier' => 'simple-line-icons:magnifier',
@@ -115,7 +124,6 @@ $iconset = [
     'question' => 'fe:question',
     'required' => 'fontisto:asterisk',
     'role'  => 'ri:profile-line',
-    'seal' => 'mdi:seal-variant',
     'select' => 'octicon:single-select-24',
     'search' => 'ant-design:search-outlined',
     'selected' => 'grommet-icons:radial-selected',
@@ -126,13 +134,14 @@ $iconset = [
     'sync' => 'material-symbols:sync',
     'table-view' => 'ic:outline-table-view',
     'text' => 'ic:sharp-text-fields',
-    'ticket' => 'mdi:ticket-confirmation-outline',  
+    'ticket' => 'mdi:ticket-confirmation-outline',
     'trash' => 'ooui:trash',
     'triangle-down' => 'entypo:triangle-down',
     'triangle-up' => 'entypo:triangle-up',
     'up' => 'mdi:chevron-up',
     'upload' => 'ic:baseline-file-upload',
     'user-config' => 'fa-solid:users-cog',
+    'agent-default-account-user' => 'ph:user-check-bold'
 
 ];
 

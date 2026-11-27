@@ -8,6 +8,7 @@
 use MapasCulturais\i;
 
 $this->import('
+    mc-accordion
     mc-card
     mc-collapse
     mc-entities
@@ -60,18 +61,26 @@ $this->import('
                         </div>
                     </template>
 
-                    <template v-if="((Object.keys(advancedFilters).length || hasSlot('advanced-filters')) && !hideAdvancedFilters)"  #content>
+                    <template v-if="((Object.keys(advancedFilters).length || hasSlot('advanced-filters')) && !hideAdvancedFilters)" #content>
                         <div class="entity-table__advanced-filters custom-scrollbar">
                             <slot name="advanced-filters" :entities="entities" :filters="filters" :toggle-advanced-filter="toggleAdvancedFilter" :option-value="optionValue">
-                                <div class="grid-12">
-                                    <div v-for="(filter, slug) in advancedFilters" class="field col-3">
-                                        <label>{{filter.label}}</label>
-    
-                                        <div class="field__group custom-scrollbar">
-                                            <label v-for="(option, k) in filter.options" :key="option" class="field__checkbox">
-                                                <input type="checkbox" :checked="advancedFilterChecked(slug, optionValue(option, k))" @change="toggleAdvancedFilter(slug, optionValue(option,k))"> {{optionLabel(option)}}
-                                            </label>
-                                        </div>
+
+                                <div class="entity-table__filter-groups">
+                                    <div v-for="groupFields in advancedFilters" class="entity-table__filter-group">
+                                        <mc-accordion v-for="(filter, slug) in groupFields" >  <!-- class="col-3 sm:col-12" -->
+                                            <template #title>
+                                                {{filter.label}}
+                                            </template>
+                                            <template #content>
+                                                <div class="field__group custom-scrollbar">
+                                                    <div v-for="(option, k) in filter.options" :key="option" class="field">
+                                                        <label class="field__checkbox">
+                                                            <input type="checkbox" :checked="advancedFilterChecked(slug, optionValue(option, k))" @change="toggleAdvancedFilter(slug, optionValue(option,k))"> {{optionLabel(option)}}
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </mc-accordion>
                                     </div>
                                 </div>
 
@@ -126,15 +135,58 @@ $this->import('
                             <div class="entity-table__popover">
                                 <label class="field__title bold"><?= i::__('Selecione as colunas que deseja exibir:')?></label>
 
+                                <div class="field entity-table__columns-search">
+                                    <input
+                                        v-model.trim="columnsSearchText"
+                                        type="text"
+                                        class="field__input"
+                                        :placeholder="text('buscar colunas')">
+                                </div>
+
                                 <label class="field__checkbox">
                                     <input ref="allHeaders" type="checkbox" @click="showAllHeaders()" :checked="allHeadersActive"> <?= i::__('Todas as colunas') ?>
                                 </label>
 
-                                <template v-for="column in columns">
-                                    <label v-if="column.text" class="field__checkbox">
-                                        <input :checked="column.visible" type="checkbox" :value="column.slug" @click="toggleHeaders($event)"> {{column.text}} 
-                                    </label>
-                                </template>
+                                <div
+                                    ref="columnsList"
+                                    class="entity-table__columns-list custom-scrollbar"
+                                    @dragover="onColumnDragOver($event)">
+                                    <template v-for="column in filteredColumns" :key="column.slug">
+                                        <div
+                                            v-if="column.text"
+                                            class="entity-table__column-row"
+                                            :class="{
+                                                'entity-table__column-row--dragging': dragColumnSlug === column.slug,
+                                                'entity-table__column-row--drop-before': dropTargetSlug === column.slug && dropPosition === 'before',
+                                                'entity-table__column-row--drop-after': dropTargetSlug === column.slug && dropPosition === 'after',
+                                            }"
+                                            :draggable="showIndex"
+                                            @dragstart="onColumnDragStart($event, column.slug)"
+                                            @dragover="onColumnDragOver($event, column.slug)"
+                                            @drop="onColumnDrop($event, column.slug)"
+                                            @dragend="onColumnDragEnd()">
+                                            <span v-if="showIndex" class="entity-table__column-handle" aria-hidden="true">
+                                                <mc-icon name="sort"></mc-icon>
+                                            </span>
+                                            <label class="field__checkbox entity-table__column-label">
+                                                <input :checked="column.visible" type="checkbox" :value="column.slug" @mousedown.stop @click="toggleHeaders($event)">
+                                                <span>{{column.text}}</span>
+                                            </label>
+                                        </div>
+                                    </template>
+                                    <small v-if="!filteredColumns.length" class="entity-table__columns-empty">{{ text('nenhuma coluna encontrada') }}</small>
+                                </div>
+
+                                <div v-if="showIndex || canManageColumnsGlobal" class="entity-table__columns-actions">
+                                    <small v-if="showIndex" class="entity-table__columns-help"><?= i::__('Arraste para reordenar') ?></small>
+
+                                    <button
+                                        v-if="canManageColumnsGlobal"
+                                        class="button button--sm button--primary button--icon"
+                                        @click.prevent="saveGlobalColumnsConfig()">
+                                        <?= i::__('Salvar padrão global') ?>
+                                    </button>
+                                </div>
                             </div>
 
                             <template #button="popover">

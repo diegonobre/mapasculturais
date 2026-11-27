@@ -17,11 +17,15 @@ use MapasCulturais\i;
         </div>
         <div class="registration-info__data">
             <h5 class="registration-info__data__title semibold"> <?= i::__('Data') ?> </h5>
-            <h4 class="registration-info__data__info bold">{{registration?.createTimestamp?.date('2-digit year')}}</h4>
+            <h4 class="registration-info__data__info bold">{{registration?.sentTimestamp?.date('2-digit year')}}</h4>
         </div>
         <div v-if="registration.category" class="registration-info__data">
             <h5 class="registration-info__data__title semibold"> <?= i::__('Categoria') ?> </h5>
             <h4 class="registration-info__data__info bold">{{registration.category}}</h4>
+        </div>
+        <div v-if="registration.opportunity.registrationTo && registration.opportunity.isAppealPhase" class="registration-info__data">
+            <h5 class="registration-info__data__title semibold"> <?= i::__('Preencher até:') ?> </h5>
+            <h4 class="registration-info__data__info bold">{{registration.opportunity.registrationTo.date('2-digit year')}} <?= i::__('às') ?> {{registration.opportunity.registrationTo.time('short')}}</h4>
         </div>
     </div>
 </div>

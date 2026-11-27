@@ -86,7 +86,9 @@
 
                 &--title {
                     font-size: size(18);
-                    line-height: size(42);
+                    // line-height: size(42);
+                    padding-top: size(10);
+                    line-height: normal;
                 }
 
                 &--description {
@@ -112,7 +114,9 @@
                     &__content {
                         &--title {
                             font-size: size(18);
-                            line-height: size(70);
+                            // line-height: size(70);
+                            padding-top: size(22);
+                            line-height: normal;
                         }
 
                         &--description {
@@ -144,5 +148,14 @@
                 }
             }
         }
+    }
+
+    .editable-fields {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        border: solid 1px #00000042;
+        padding: 15px;
+        border-radius: 5px;
     }
 }

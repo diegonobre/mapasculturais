@@ -8,7 +8,7 @@ use MapasCulturais\i;
 
 $this->layout = 'registrations';
 
-$this->addOpportunityPhasesToJs();
+$this->addOpportunityPhasesToJs($entity);
 $this->addRegistrationPhasesToJs();
 
 $this->import('
@@ -22,6 +22,7 @@ $this->import('
     opportunity-header
     opportunity-phases-timeline
     registration-print
+    registration-workplan-form
     v1-embed-tool
     registration-evaluation-tab
 ');
@@ -35,7 +36,19 @@ $this->breadcrumb = [
 
 $entity = $entity->firstPhase;
 
+$registration = $entity ;
+$result = [];
+if($all_registrations = $app->repo('Registration')->findBy(['number' => $entity->number])) {
+    foreach($all_registrations as $reg) {
+        $em = $reg->evaluationMethod;
+        $result[$reg->id] = $em ? $em->shouldDisplayEvaluationResults($reg) : false;
+    }
+}
+    
+$this->jsObject['config']['registrationResults']['shouldDisplayEvaluationResults'] = $result;
+
 $today = new DateTime();
+$hide_phase_dates = $entity->opportunity->firstPhase->hidePhaseDates;
 ?>
 
 <div class="main-app registration single">
@@ -144,7 +157,7 @@ $today = new DateTime();
                             </span>                            
                             <span class="info" v-if="entity.agentsData.owner?.dataDeNascimento"> 
                                 <strong> <?= i::__('Data de nascimento ou fundação') ?>: </strong> 
-                                <span>{{entity.agentsData.owner?.dataDeNascimento}}</span><!-- .date('2-digit year') -->
+                                <span>{{entity.agentsData.owner?.dataDeNascimento.split('-').reverse().join('/')}}</span>
                             </span>  
                             <span class="info" v-if="entity.agentsData.owner?.emailPublico"> 
                                 <strong> <?= i::__('Email') ?>: </strong> 
@@ -155,7 +168,7 @@ $today = new DateTime();
                                 <span>{{entity.agentsData.owner?.raca}}</span>
                             </span>                            
                             <span class="info" v-if="entity.agentsData.owner?.genero"> 
-                                <strong> <?= i::__('Genero') ?>: </strong> 
+                                <strong> <?= i::__('Gênero') ?>: </strong> 
                                 <span>{{entity.agentsData.owner?.genero}}</span>
                             </span>                            
                             <span class="info" v-if="entity.agentsData.owner?.endereco"> 
@@ -185,7 +198,26 @@ $today = new DateTime();
                     </template>
                 </mc-card>
 
-                <mc-card v-if="entity.opportunity.useAgentRelationColetivo && entity.opportunity.useAgentRelationColetivo !== 'dontUse'"> 
+                <mc-card v-if="entity.opportunity.enableQuotasQuestion">
+                    <template #content>
+                        <div class="registered-info">
+                            <span class="info">
+                                <strong> <?= i::__('Vai concorrer às cotas?') ?> </strong>
+                            </span>
+                            <span class="info" v-if="entity.appliedForQuota === true || entity.appliedForQuota === 'true' || entity.appliedForQuota === 1 || entity.appliedForQuota === '1'">
+                                <?= i::__('Sim') ?>
+                            </span>
+                            <span class="info" v-else-if="entity.appliedForQuota === false || entity.appliedForQuota === 'false' || entity.appliedForQuota === 0 || entity.appliedForQuota === '0'">
+                                <?= i::__('Não') ?>
+                            </span>
+                            <span class="info" v-else>
+                                <?= i::__('Não informado') ?>
+                            </span>
+                        </div>
+                    </template>
+                </mc-card>
+
+                <mc-card v-if="entity.opportunity.useAgentRelationColetivo && entity.opportunity.useAgentRelationColetivo !== 'dontUse'">
                     <template #title>
                         <label> <?= i::__('Coletivo') ?> </label>
                     </template>
@@ -264,8 +296,11 @@ $today = new DateTime();
                         <?php endif ?>
                         <?php if($phase->status < 1 && !$opportunity->isFirstPhase && $today <= $opportunity->registrationTo): ?>
                             <mc-alert type="warning">
-                                <?= i::__('Nesta etapa, é necessário inserir informações. Por favor, clique no botão para acessar o formulário e preenchê-lo') ?> <br>
-                                <?= i::__('dentro do período de') ?>  <?=$phase->opportunity->registrationFrom->format("d/m/Y")?> <?= i::__('à') ?> <?=$phase->opportunity->registrationTo->format("d/m/Y H:i:s")?>
+                                <?= i::__('Nesta etapa, é necessário inserir informações. Por favor, clique no botão para acessar o formulário e preenchê-lo') ?>
+                                <?php if(!$hide_phase_dates): ?>
+                                    <br>
+                                    <?= i::__('dentro do período de') ?>  <?=$phase->opportunity->registrationFrom->format("d/m/Y")?> <?= i::__('à') ?> <?=$phase->opportunity->registrationTo->format("d/m/Y H:i:s")?>
+                                <?php endif; ?>
                             </mc-alert>
                             <div class="grid-12">
                                 <div class="col-3 sm:col-12">
@@ -273,47 +308,112 @@ $today = new DateTime();
                                 </div>
                             </div>
                             <?php else: ?>
-                                <?php if($phase->status === 0 && $today > $opportunity->registrationTo ):?>
-                                    <mc-alert type="warning">
-                                        <?= i::__("Você não enviou o formulário desta fase") ?> <br>
-                                    </mc-alert>
-                                    <div class="grid-12">
-                                        <div class="col-3 sm:col-12">
-                                            <a class="button button--primary" href="<?=$app->createUrl("registration", "edit", [$phase->id])?>"><?= i::__('Acessar formulário') ?></a>
+                                <?php if($phase->status === 0):?>
+                                    <?php if($today > $opportunity->registrationTo):?>
+                                        <mc-alert type="warning">
+                                            <?= i::__("Você não enviou o formulário desta fase") ?> <br>
+                                            <small>
+                                                <?php if($hide_phase_dates): ?>
+                                                    <?= i::__("O prazo para envio dessa inscrição foi encerrado") ?>
+                                                <?php else: ?>
+                                                    <?= i::__("O prazo para envio dessa inscrição foi até {$opportunity->registrationTo->format('d/m/Y H:i:s')}") ?>
+                                                <?php endif; ?>
+                                            </small> <br>
+                                        </mc-alert>
+                                    <?php else: ?>
+                                        <mc-alert type="warning">
+                                            <?= i::__("Você não enviou o formulário desta fase") ?> <br>
+                                        </mc-alert>
+                                        <div class="grid-12">
+                                            <div class="col-3 sm:col-12">
+                                                <a class="button button--primary" href="<?=$app->createUrl("registration", "edit", [$phase->id])?>"><?= i::__('Acessar formulário') ?></a>
+                                            </div>
                                         </div>
-                                    </div>
+                                    <?php endif ?>
                                 <?php else: ?>
                                     <?php $this->applyTemplateHook("registration-form-view", 'before', [$phase]) ?>
                                     <v1-embed-tool route="registrationview" :id="<?=$phase->id?>"></v1-embed-tool>
+                                    <?php if ($opportunity->isReportingPhase && $opportunity->parent->enableWorkplan): ?>
+                                        <registration-workplan-form :phase-id="<?= $opportunity->id ?>"></registration-workplan-form>
+                                    <?php endif; ?>
                                     <?php $this->applyTemplateHook("registration-form-view", 'after', [$phase]) ?>
                                 <?php endif ?>
                                 
                             
                         <?php endif ?>
                     <?php endif ?>
+                    <?php if ($appeal_phase = $opportunity->appealPhase): ?>
+                        <?php $appeal_registration = $app->repo('Registration')->findOneBy(['opportunity' => $appeal_phase, 'number' => $entity->number]); ?>
+                        <?php if ($appeal_registration && $appeal_registration->canUser('view')): ?>
+                            <div class="registration-appeal-phase">
+                                <h2><?= $appeal_phase->name ?> <span class="appeal-badge"><?= i::__('Recurso') ?></span></h2>
+                                <?php if($appeal_registration->status === 0):?>
+                                    <?php if($today > $appeal_phase->registrationTo):?>
+                                        <mc-alert type="warning">
+                                            <?= i::__("Você não enviou o formulário desta fase") ?> <br>
+                                            <small>
+                                                <?php if($hide_phase_dates): ?>
+                                                    <?= i::__("O prazo para envio dessa inscrição foi encerrado") ?>
+                                                <?php else: ?>
+                                                    <?= i::__("O prazo para envio dessa inscrição foi até {$appeal_phase->registrationTo->format('d/m/Y H:i:s')}") ?>
+                                                <?php endif; ?>
+                                            </small> <br>
+                                        </mc-alert>
+                                    <?php else: ?>
+                                        <mc-alert type="warning">
+                                            <?= i::__("Você não enviou o formulário desta fase") ?> <br>
+                                        </mc-alert>
+                                        <div class="grid-12">
+                                            <div class="col-3 sm:col-12">
+                                                <a class="button button--primary" href="<?=$app->createUrl("registration", "edit", [$appeal_registration->id])?>"><?= i::__('Acessar formulário') ?></a>
+                                            </div>
+                                        </div>
+                                    <?php endif ?>
+                                <?php else: ?>
+                                    <?php $this->applyTemplateHook("registration-appeal-phase-form-view", 'before', [$appeal_registration]) ?>
+                                    <v1-embed-tool route="registrationview" :id="<?=$appeal_registration->id?>"></v1-embed-tool>
+                                    <?php $this->applyTemplateHook("registration-appeal-phase-form-view", 'after', [$appeal_registration]) ?>
+                                <?php endif ?>
+                            </div>
+                        <?php endif; ?>
+                    <?php endif; ?>
                     <?php $phase = $phase->nextPhase; ?>
                 <?php endwhile ?>
 
+                <?php $this->applyTemplateHook('registration-ficha-tab', 'end', [$entity]) ?>
             </div>
         </mc-tab>
 
         <mc-tab v-if="entity.opportunity.currentUserPermissions['@control']" label="<?= i::_e('Avaliadores') ?>" slug="valuers">
             <div class="registration__content">
                 <mc-tabs>
-                <?php $phase = $entity; 
-                    while($phase):
-                        if (!($emc = $phase->opportunity->evaluationMethodConfiguration)) {
-                            $phase = $phase->nextPhase; 
-                            continue;
-                        }
+                <?php
+                $phase = $entity;
+                while ($phase):
+                    $opp = $phase->opportunity;
+                    $emc = $opp->evaluationMethodConfiguration ?? null;
+                    if ($emc):
                         ?>
-                        <mc-tab label="<?= htmlspecialchars($emc->name) ?>" slug="valuers-<?= $phase->opportunity->id ?>">
+                        <mc-tab label="<?= htmlspecialchars($emc->name) ?>" slug="valuers-<?= $opp->id ?>">
                             <mc-card>
-                                <registration-evaluation-tab :phase-id="<?= $phase->opportunity->id ?>"></registration-evaluation-tab>
+                                <registration-evaluation-tab :phase-id="<?= (int) $opp->id ?>"></registration-evaluation-tab>
                             </mc-card>
                         </mc-tab>
-                    <?php $phase = $phase->nextPhase;
-                    endwhile ?>
+                    <?php
+                    endif;
+                    $appeal_opp = $opp->appealPhase ?? null;
+                    if ($appeal_opp && ($appeal_emc = $appeal_opp->evaluationMethodConfiguration ?? null)):
+                        ?>
+                        <mc-tab label="<?= htmlspecialchars($appeal_emc->name) ?>" slug="valuers-<?= $appeal_opp->id ?>">
+                            <mc-card>
+                                <registration-evaluation-tab :phase-id="<?= (int) $appeal_opp->id ?>"></registration-evaluation-tab>
+                            </mc-card>
+                        </mc-tab>
+                    <?php
+                    endif;
+                    $phase = $phase->nextPhase;
+                endwhile;
+                ?>
                 </mc-tabs>
             </div>
         </mc-tab>

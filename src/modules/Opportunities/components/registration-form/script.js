@@ -9,6 +9,11 @@ app.component('registration-form', {
 
         step: {
             type: Entity,
+            default: null
+        },
+
+        isLastStep: {
+            type: Boolean,
             required: true
         },
     },
@@ -22,11 +27,21 @@ app.component('registration-form', {
 
     data() {
         const editableFields = this.registration.editableFields ?? [];
+        const allowedFields = this.registration.allowedFields;
         const registrationSnapshot = Object.assign({}, this.registration)
 
         return {
             editableFields,
+            allowedFields,
             registrationSnapshot,
+        }
+    },
+
+    watch: {
+        'registration.appliedForQuota': function (newVal, oldVal) {
+            if (newVal !== oldVal) {
+                this.clearFields();
+            }
         }
     },
 
@@ -51,6 +66,13 @@ app.component('registration-form', {
             fields.sort((a,b) => a.displayOrder - b.displayOrder);
 
             return fields.filter((field) => {
+                const fieldName = field.fieldName || field.groupName;
+
+                // Suporte: se a lista de campos permitidos for informada, apenas esses campos devem aparecer.
+                if (Array.isArray(this.allowedFields) && !this.allowedFields.includes(fieldName)) {
+                    return false;
+                }
+
                 if (field.categories?.length && !field.categories.includes(registration.category)) {
                     return false;
                 }
@@ -59,7 +81,7 @@ app.component('registration-form', {
                     return false;
                 }
 
-                if (field.registrationProponentTypes?.length && !field.registrationProponentTypes.includes(registration.proponentType)) {
+                if (field.proponentTypes?.length && !field.proponentTypes.includes(registration.proponentType)) {
                     return false;
                 }
 
@@ -70,6 +92,12 @@ app.component('registration-form', {
                     if (fieldName) {
                         if(registration[fieldName] instanceof Array) {
                             if (!registration[fieldName].includes(fieldValue)) {
+                                return false;
+                            }
+                        } else if (fieldName == 'appliedForQuota') {
+                            let appliedForQuota = registration.appliedForQuota === true || registration.appliedForQuota === 'true';
+
+                            if (!appliedForQuota) {
                                 return false;
                             }
                         } else if (registration[fieldName] != fieldValue) {
@@ -142,6 +170,10 @@ app.component('registration-form', {
         },
 
         stepFields () {
+            if (!this.step) {
+                return [];
+            }
+
             return this.fields.filter((field) => {
                 return field.step?.id === this.step._id;
             });
@@ -163,14 +195,16 @@ app.component('registration-form', {
         isDisabled(field) {
             let fieldName = field.fieldName || field.groupName;
 
-            if (!this.registrationSnapshot[fieldName]) {
-                return false;
-            }
-
             if (this.editableFields.length > 0) {
                 if (this.disableFields && this.disableFields.includes(fieldName)) {
                     return true;
                 }
+            }
+
+            // Se estamos no modo suporte (allowedFields definido), desabilita campos 
+            // que estão em allowedFields mas não em editableFields
+            if (Array.isArray(this.allowedFields) && this.allowedFields.length > 0) {
+                return !this.editableFields.includes(fieldName);
             }
 
             return this.editableFields.length > 0 ? !this.editableFields.includes(fieldName) : false;
@@ -180,23 +214,35 @@ app.component('registration-form', {
             this.$nextTick(() => {
                 const registration = this.registration;
                 const fields = [...$MAPAS.config.registrationForm.fields, ...$MAPAS.config.registrationForm.files];
-
+                
                 for(let i = 0; i < 4; i++) {
                     for(let field of fields) {
-                        if (field.conditional) {
-                            const fieldName = field.conditionalField;
-                            const fieldValue = field.conditionalValue;
+                        if (!field.conditional) {
+                            continue
+                        }
+                        if(this.editableFields.length && !this.editableFields.includes(field.fieldName)) {
+                            continue;
+                        }
+                        
+                        const fieldName = field.conditionalField;
+                        const fieldValue = field.conditionalValue;
 
-                            if (fieldName) {
-                                if(registration[fieldName] instanceof Array) {
-                                    if (!registration[fieldName].includes(fieldValue)) {
-                                        registration[field.fieldName] = null;
-                                    }
-                                } else if (registration[fieldName] != fieldValue) {
+                        if (fieldName) {
+                            if(registration[fieldName] instanceof Array) {
+                                if (!registration[fieldName].includes(fieldValue)) {
                                     registration[field.fieldName] = null;
                                 }
+                            } else if (fieldName == 'appliedForQuota') {
+                                let appliedForQuota = registration.appliedForQuota === true || registration.appliedForQuota === 'true';
+                                
+                                if (!appliedForQuota && registration[field.fieldName]) {
+                                   registration[field.fieldName] = null;
+                                }
+                            } else if (registration[fieldName] != fieldValue) {
+                                registration[field.fieldName] = null;
                             }
                         }
+                        
                     }
                 }
             });

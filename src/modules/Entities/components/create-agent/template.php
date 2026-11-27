@@ -13,15 +13,11 @@ $this->import('
     mc-modal 
 '); 
 ?>
-<mc-modal :title="modalTitle" classes="create-modal create-agent-modal" button-label="<?php i::_e('Criar Agente')?>"  @open="createEntity()" @close="destroyEntity()">
+<mc-modal :title="modalTitle" :teleport="teleport" :click-to-close="clickToClose" classes="create-modal create-agent-modal" button-label="<?php i::_e('Criar Agente')?>"  @open="createEntity()" @close="destroyEntity()">
     <template v-if="entity && !entity.id" #default>
         <label><?php i::_e('Crie um agente com informações básicas')?><br><?php i::_e('e de forma rápida')?></label>
         <div class="create-modal__fields">
-            <entity-field :entity="entity" hide-required  :editable="true" label="<?php i::esc_attr_e("Selecione o tipo do agente")?>" prop="type"></entity-field>
-            <entity-field :entity="entity" hide-required label=<?php i::esc_attr_e("Nome ou título")?>  prop="name"></entity-field>
-            <entity-terms :entity="entity" hide-required :editable="true" :classes="areaClasses" taxonomy='area' title="<?php i::esc_attr_e("Área de Atuação") ?>"></entity-terms>
-            <entity-field :entity="entity" hide-required prop="shortDescription" :max-length="400" label="<?php i::esc_attr_e("Adicione uma Descrição curta para o Agente")?>"></entity-field>
-            <entity-field :entity="entity" hide-required v-for="field in fields" :prop="field"></entity-field>
+            <?php $this->part('entities/create-agent-fields') ?>
         </div>
     </template>
 

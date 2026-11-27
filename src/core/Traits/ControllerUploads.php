@@ -3,7 +3,8 @@ namespace MapasCulturais\Traits;
 
 use Exception;
 use \MapasCulturais\App;
-use \MapasCulturais\Exceptions;
+use MapasCulturais\Exceptions\SaveFileError;
+use MapasCulturais\i;
 
 /**
  * Defines that the controller has uploads.
@@ -67,6 +68,11 @@ trait ControllerUploads{
 
         // if no files uploaded or no id in request data, return an error
         if(empty($_FILES) || !$this->data['id']){
+            if($this->postExceededMaxUploadSize()){
+                $this->errorJson(\MapasCulturais\i::__('O arquivo enviado é maior do que o permitido.'));
+                return ;
+            }
+
             $this->errorJson(\MapasCulturais\i::__('Nenhum arquivo enviado'));
             return ;
         }
@@ -90,10 +96,11 @@ trait ControllerUploads{
                     if(is_array($file) && $upload_group->unique){
                         continue;
 
-                    // else if multiple files was uploaded and this group accepts multiple files, set the group to this files and add them to $files array
                     }elseif(is_array($file) && !$upload_group->unique){
                         foreach($file as $f){
-                            if($error = $upload_group->getError($f)){
+                            if($ext_error = $upload_group->getExtensionError($f)){
+                                $files[] = ['error' => $ext_error, 'group' => $upload_group];
+                            }elseif($error = $upload_group->getError($f)){
                                 $files[] = ['error' => $error, 'group' => $upload_group];
                             }else{
                                 $f->group = $group_name;
@@ -101,19 +108,20 @@ trait ControllerUploads{
                             }
                         }
 
-                    // else if a single file was uploaded, add the group to this file and add this file to $files array
                     }else{
                         if(key_exists('description', $this->data) && is_array($this->data['description']) && key_exists($group_name, $this->data['description']))
                             $file->description = $this->data['description'][$group_name];
 
-                        if($errors = $file->getValidationErrors()){                            
+                        if($ext_error = $upload_group->getExtensionError($file)){
+                            $files[$group_name] = ['error' => $ext_error, 'group' => $upload_group];
+                        }elseif($errors = $file->getValidationErrors()){                            
                             $error_messages = [];
                             foreach($errors as $_errors){
                                 $error_messages = array_merge(array_values($_errors), $error_messages);
                             }
                             $files[$group_name] = ['error' => implode(', ', $error_messages), 'group' => $upload_group];
 
-                        } else if ($error = $upload_group->getError($file)){
+                        } elseif ($error = $upload_group->getError($file)){
                             $files[] = ['error' => $error, 'group' => $upload_group];
                         }else{
                             $file->group = $group_name;
@@ -161,26 +169,28 @@ trait ControllerUploads{
 
         foreach($files as $file){
             $upload_group = $app->getRegisteredFileGroup($this->id, $file->group);
+            $old_files = $app->repo($file_class_name)->findBy(['owner' => $owner, 'group' => $file->group]);
 
             $file->owner = $owner;
 
-            // if this group is unique, deletes the existent file
-            if($upload_group->unique){
-                $old_file = $app->repo($file_class_name)->findOneBy(['owner' => $owner, 'group' => $file->group]);
-                if($old_file)
-                    $old_file->delete();
-            }
-
-            /** Add verification to see if the file is really saved in storage */
-            try {
+            try{
+                $app->applyHookBoundTo($this, "{$file->hookPrefix}.upload.filesSave:before", [$file]);
                 $file->save();
-            } catch (\MapasCulturais\Exceptions\FileUploadError $th) {
-                return $this->errorJson([$th->group => $th->message]);
+                $app->applyHookBoundTo($this, "{$file->hookPrefix}.upload.filesSave:after", [$file]);
+            } catch (SaveFileError $e) {
+                $this->errorJson([$file->group => $e->getMessage()]);
             }
-
             $file_group = $file->group;
 
             if($upload_group->unique){
+                if($old_files) {
+                    foreach($old_files as $old_file) {
+                        if($old_file->id != $file->id) {
+                            $old_file->delete(true);
+                        }
+                    }
+                }
+
                 $result[$file_group] = $file;
             }else{
                 if(!key_exists($file->group, $result))
@@ -192,6 +202,16 @@ trait ControllerUploads{
         $app->em->flush();
         $this->json($result);
         return;
+    }
+
+    /**
+     * Indica que o corpo do POST passou do limite efetivo de upload.
+     * @return bool
+     */
+    protected function postExceededMaxUploadSize(){
+        $content_length = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+
+        return $content_length > App::i()->getMaxUploadSize(false) * 1024;
     }
 
     /**

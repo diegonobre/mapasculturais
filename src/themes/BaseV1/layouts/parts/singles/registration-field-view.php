@@ -1,10 +1,26 @@
 <?php $this->applyTemplateHook('registration-field-item', 'begin') ?>
-<div ng-if="field.fieldType !== 'file' && field.fieldType !== 'section' && field.fieldType !== 'persons' && field.config.entityField !== '@location' && field.config.entityField !== '@links' &&  field.fieldType !== 'links'  && !checkRegistrationFields(field, 'links')">
+<div ng-if="isAgentFileField(field)">
+    <label>{{field.required ? '*' : ''}} {{field.title}}: </label>
+    <a ng-if="entity[field.fieldName] && entity[field.fieldName].url" class="attachment-title" href="{{entity[field.fieldName].url}}" target="_blank" rel="noopener noreferrer">{{entity[field.fieldName].name}}</a>
+    <span ng-if="!entity[field.fieldName] || !entity[field.fieldName].url"><em><?php \MapasCulturais\i::_e("Arquivo não enviado."); ?></em></span>
+</div>
+<div ng-if="field.fieldType !== 'file' && field.fieldType !== 'section' && field.fieldType !== 'persons' && field.fieldType !== 'custom-table' && field.config.entityField !== '@location' && field.config.entityField !== '@links' &&  field.fieldType !== 'links'  && !checkRegistrationFields(field, 'links') && !isAgentFileField(field)">
     <label>{{field.required ? '*' : ''}} {{field.title}}: </label>
     <div ng-if="field.fieldType !== 'agent-owner-field'">
-        <span ng-if="entity[field.fieldName] && field.fieldType !== 'textarea'" ng-bind-html="printField(field, entity[field.fieldName])"></span>
-        <p ng-if="entity[field.fieldName] && field.fieldType === 'textarea'" ng-bind-html="printField(field, entity[field.fieldName])" style="white-space: pre-line"></p>
-        <span ng-if="!entity[field.fieldName]"><em><?php \MapasCulturais\i::_e("Campo não informado."); ?></em></span>
+        <div ng-if="field.fieldType != 'bankFields'">
+            <span ng-if="hasFieldValue(entity[field.fieldName]) && field.fieldType !== 'textarea'" ng-bind-html="printField(field, entity[field.fieldName])"></span>
+            <p ng-if="hasFieldValue(entity[field.fieldName]) && field.fieldType === 'textarea'" ng-bind-html="printField(field, entity[field.fieldName])" style="white-space: pre-line"></p>
+            <span ng-if="!hasFieldValue(entity[field.fieldName])"><em><?php \MapasCulturais\i::_e("Campo não informado."); ?></em></span>
+        </div>
+
+        <div ng-if="field.fieldType == 'bankFields'">
+            <p ng-if="hasFieldValue(entity[field.fieldName]) && field.fieldType === 'textarea'" ng-bind-html="printField(field, entity[field.fieldName])" style="white-space: pre-line"></p>
+            <p><strong><?php \MapasCulturais\i::_e("Típo de conta:"); ?></strong> {{formetBankField(entity[field.fieldName]).account_type}}</p>
+            <p><strong><?php \MapasCulturais\i::_e("Banco:"); ?></strong> {{formetBankField(entity[field.fieldName]).number}}</p>
+            <p><strong><?php \MapasCulturais\i::_e("Agencia:"); ?></strong> {{formetBankField(entity[field.fieldName]).branch}} - {{formetBankField(entity[field.fieldName]).dv_branch}}</p>
+            <p><strong><?php \MapasCulturais\i::_e("Conta:"); ?></strong> {{formetBankField(entity[field.fieldName]).account_number}} - {{formetBankField(entity[field.fieldName]).dv_account_number}}</p>
+        </div>
+       
     </div>
 
     <div ng-if="field.fieldType === 'agent-owner-field'">
@@ -14,9 +30,9 @@
        </div>
 
        <div ng-if="field.config.entityField !== 'pessoaDeficiente'">
-            <span ng-if="entity[field.fieldName] && field.fieldType !== 'textarea'" ng-bind-html="printField(field, entity[field.fieldName])"></span>
-            <p ng-if="entity[field.fieldName] && field.fieldType === 'textarea'" ng-bind-html="printField(field, entity[field.fieldName])" style="white-space: pre-line"></p>
-            <span ng-if="!entity[field.fieldName]"><em><?php \MapasCulturais\i::_e("Campo não informado."); ?></em></span>
+            <span ng-if="hasFieldValue(entity[field.fieldName]) && field.fieldType !== 'textarea'" ng-bind-html="printField(field, entity[field.fieldName])"></span>
+            <p ng-if="hasFieldValue(entity[field.fieldName]) && field.fieldType === 'textarea'" ng-bind-html="printField(field, entity[field.fieldName])" style="white-space: pre-line"></p>
+            <span ng-if="!hasFieldValue(entity[field.fieldName])"><em><?php \MapasCulturais\i::_e("Campo não informado."); ?></em></span>
        </div>
     </div>
 </div>
@@ -25,16 +41,84 @@
 </div>
 <div ng-if="field.fieldType === 'persons'">
     <label>{{field.required ? '*' : ''}} {{field.title}}: </label>
-    <div ng-repeat="(key, item) in entity[field.fieldName]" ng-if="item && key !== 'location' && key !== 'publicLocation' ">
-        <div><b ng-if="item.name">Nome: </b>{{item.name}}<b ng-if="item.cpf"> CPF: </b>{{item.cpf}} <b ng-if="item.relationship">Relação: </b>{{item.relationship}} <b ng-if="item.function">Função: </b>{{item.function}}</div>
+    <div ng-repeat="person in entity[field.fieldName]" ng-if="person">
+        <div style="margin-bottom: 15px; padding: 10px; border-left: 3px solid #ccc;">
+            <div ng-if="field.config.name && person.name"><strong><?php \MapasCulturais\i::_e("Nome"); ?>: </strong>{{person.name}}</div>
+            <div ng-if="field.config.fullName && person.fullName"><strong><?php \MapasCulturais\i::_e("Nome completo"); ?>: </strong>{{person.fullName}}</div>
+            <div ng-if="field.config.socialName && person.socialName"><strong><?php \MapasCulturais\i::_e("Nome social"); ?>: </strong>{{person.socialName}}</div>
+            <div ng-if="field.config.cpf && person.cpf"><strong><?php \MapasCulturais\i::_e("CPF"); ?>: </strong>{{person.cpf}}</div>
+            <div ng-if="field.config.cnpj && person.cnpj"><strong><?php \MapasCulturais\i::_e("CNPJ"); ?>: </strong>{{person.cnpj}}</div>
+            <div ng-if="field.config.miniCurriculum && person.miniCurriculum"><strong><?php \MapasCulturais\i::_e("Mini currículo"); ?>: </strong><span style="white-space: pre-line">{{person.miniCurriculum}}</span></div>
+            <div ng-if="field.config.income && person.income"><strong><?php \MapasCulturais\i::_e("Renda"); ?>: </strong>{{person.income}}</div>
+            <div ng-if="field.config.education && person.education"><strong><?php \MapasCulturais\i::_e("Escolaridade"); ?>: </strong>{{person.education}}</div>
+            <div ng-if="field.config.telephone && person.telephone"><strong><?php \MapasCulturais\i::_e("Telefone"); ?>: </strong>{{person.telephone}}</div>
+            <div ng-if="field.config.email && person.email"><strong><?php \MapasCulturais\i::_e("Email"); ?>: </strong>{{person.email}}</div>
+            <div ng-if="field.config.race && person.race"><strong><?php \MapasCulturais\i::_e("Raça/Cor"); ?>: </strong>{{person.race}}</div>
+            <div ng-if="field.config.gender && person.gender"><strong><?php \MapasCulturais\i::_e("Gênero"); ?>: </strong>{{person.gender}}</div>
+            <div ng-if="field.config.sexualOrientation && person.sexualOrientation"><strong><?php \MapasCulturais\i::_e("Orientação sexual"); ?>: </strong>{{person.sexualOrientation}}</div>
+            <div ng-if="field.config.deficiencies && person.deficiencies && formatPersonArrayField(person.deficiencies)">
+                <strong><?php \MapasCulturais\i::_e("Deficiências"); ?>: </strong>{{formatPersonArrayField(person.deficiencies)}}
+            </div>
+            <div ng-if="field.config.comunty && person.comunty"><strong><?php \MapasCulturais\i::_e("Comunidade tradicional"); ?>: </strong>{{person.comunty}}</div>
+            <div ng-if="field.config.area && person.area && formatPersonArrayField(person.area)">
+                <strong><?php \MapasCulturais\i::_e("Áreas de atuação"); ?>: </strong>{{formatPersonArrayField(person.area)}}
+            </div>
+            <div ng-if="field.config.funcao && person.funcao && formatPersonArrayField(person.funcao)">
+                <strong><?php \MapasCulturais\i::_e("Funções/Profissões"); ?>: </strong>{{formatPersonArrayField(person.funcao)}}
+            </div>
+            <div ng-if="field.config.relationship && person.relationship"><strong><?php \MapasCulturais\i::_e("Relação"); ?>: </strong>{{person.relationship}}</div>
+            <div ng-if="field.config.function && person.function"><strong><?php \MapasCulturais\i::_e("Função"); ?>: </strong>{{person.function}}</div>
+        </div>
+    </div>
+</div>
+<div ng-if="field.fieldType === 'custom-table'">
+    <label>{{field.required ? '*' : ''}} {{field.title}}: </label>
+    <div ng-if="entity[field.fieldName] && entity[field.fieldName].length > 0">
+        <table class="custom-table-view" style="width: 100%; border-collapse: collapse; border: 1px solid #ddd; margin-top: 10px;">
+            <thead>
+                <tr style="background-color: #f2f2f2;">
+                    <th ng-repeat="column in field.config.columns" style="border: 1px solid #ddd; padding: 10px; text-align: left;">
+                        {{column.name}}
+                    </th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr ng-repeat="row in entity[field.fieldName]">
+                    <td ng-repeat="column in field.config.columns" style="border: 1px solid #ddd; padding: 8px;">
+                        <span ng-if="column.type === 'date' && hasFieldValue(row['col' + $index])">
+                            {{row['col' + $index] | date:'dd/MM/yyyy'}}
+                        </span>
+                        <span ng-if="column.type !== 'date' || !hasFieldValue(row['col' + $index])">
+                            {{hasFieldValue(row['col' + $index]) ? row['col' + $index] : '-'}}
+                        </span>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    <div ng-if="!entity[field.fieldName] || entity[field.fieldName].length === 0">
+        <em><?php \MapasCulturais\i::_e("Nenhum dado informado."); ?></em>
     </div>
 </div>
 <?php //@TODO pegar endereço do campo endereço (verificar porque não esta salvando corretamente, arquicos location.js e _location.php)
 ?>
 <div ng-if="field.config.entityField === '@location'">
     <label>{{field.required ? '*' : ''}} {{field.title}}: </label>
-    <div ng-repeat="(key, item) in entity[field.fieldName]" ng-if="item && key !== 'location' && key !== 'publicLocation' ">
-        <span>{{key.split('_').pop()}}: {{item}}</span>
+    <div ng-repeat="(key, item) in entity[field.fieldName]"
+        ng-if="key !== 'location' && key !== 'publicLocation' && item && !key.startsWith('field')">
+        <span ng-if="key == 'address_level0'">
+            <strong ng-if="item == 'BR'"> {{ getAddressLabel(key, entity[field.fieldName].address_level0) }}: </strong> {{ item }}
+        </span>
+        
+        <span ng-if="key != 'address_level0' && key != 'En_Pais'">
+            <strong>{{ getAddressLabel(key, entity[field.fieldName].address_level0) }}:</strong> {{ item }}
+        </span>
+    </div>
+    <div ng-if="entity[field.fieldName].hasOwnProperty('publicLocation')">
+        <span>
+            <?php \MapasCulturais\i::_e("Este endereço pode ficar público na plataforma?:"); ?>
+            {{ entity[field.fieldName].publicLocation == true || entity[field.fieldName].publicLocation == 'true' ? 'Sim' : 'Não' }}
+        </span>
     </div>
 </div>
 

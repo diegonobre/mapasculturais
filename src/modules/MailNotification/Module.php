@@ -4,6 +4,7 @@ namespace MailNotification;
 
 require __DIR__ . "/JobTypes/SendMailNotification.php";
 
+use MailNotification\JobTypes\MailMessage;
 use MapasCulturais\i;
 use MapasCulturais\App;
 use MapasCulturais\Entities\Registration;
@@ -32,6 +33,7 @@ class Module extends \MapasCulturais\Module
 
         // Registro do JOB
         $app->registerJobType(new SendMailNotification(SendMailNotification::SLUG));
+        $app->registerJobType(new MailMessage(MailMessage::SLUG));
 
         $self = $this;
 
@@ -63,7 +65,7 @@ class Module extends \MapasCulturais\Module
 
             $sendMail = false;
             if($this->status ===  Registration::STATUS_DRAFT && $this->opportunity->isDataCollection) {
-                if($this->opportunity->isFirstPhase) {
+                if($this->opportunity->isFirstPhase || $this->opportunity->isReportingPhase) {
                     $sendMail = true;
                 } else if ($this->opportunity->getRegistrationFieldConfigurations() || $this->opportunity->getRegistrationFileConfigurations()) {
                     $sendMail = true;

@@ -7,6 +7,7 @@ use MapasCulturais\Entities\Job;
 use MapasCulturais\Entities\Registration;
 use MapasCulturais\Entities\Opportunity;
 use MapasCulturais\i;
+use \Spreadsheets\FieldParser;
 use Spreadsheets\SpreadsheetJob;
 
 class Registrations extends SpreadsheetJob
@@ -17,6 +18,110 @@ class Registrations extends SpreadsheetJob
 
     protected function _getTargetEntities() : array {
         return [Registration::class];
+    }
+
+    /**
+     * Obtém valor de localização aceitando tanto objeto quanto array (address_level* ou En_*).
+     */
+    private static function _getLocationValue($location, string $prop1, string $prop2): ?string {
+        if ($location === null) {
+            return null;
+        }
+        if (is_array($location)) {
+            $v = $location[$prop1] ?? $location[$prop2] ?? null;
+            return $v !== '' && $v !== null ? (string) $v : null;
+        }
+        $v = $location->$prop1 ?? $location->$prop2 ?? null;
+        return $v !== '' && $v !== null ? (string) $v : null;
+    }
+
+    /**
+     * Formata campos do tipo addresses para célula de planilha (texto legível).
+     * Espelha a linha usada no PDF da inscrição.
+     */
+    private static function _formatAddressesForSpreadsheet(array $addresses): string {
+        $lines = [];
+
+        foreach ($addresses as $address) {
+            $line = self::_formatAddressListItem($address);
+            if ($line !== '') {
+                $lines[] = $line;
+            }
+        }
+
+        return implode(' || ', $lines);
+    }
+
+    private static function _formatCustomTableForSpreadsheet(array $columns, array $rows): string {
+        $lines = [];
+
+        foreach ($rows as $row) {
+            $row = (array) $row;
+            $cells = [];
+            $has_values = false;
+
+            foreach ($columns as $index => $column) {
+                $column = (array) $column;
+                $value = $row["col{$index}"] ?? '';
+                $value = is_scalar($value) ? (string) $value : '';
+                $has_values = $has_values || $value !== '';
+                $cells[] = ($column['name'] ?? '') . ': ' . $value;
+            }
+
+            if ($has_values) {
+                $lines[] = implode(' | ', $cells);
+            }
+        }
+
+        return implode(' || ', $lines);
+    }
+
+    private static function _formatAddressListItem(mixed $address): string {
+        if (!is_array($address) && !is_object($address)) {
+            return is_scalar($address) && $address !== '' ? (string) $address : '';
+        }
+
+        $get = static function (mixed $source, string $key): string {
+            if (is_array($source)) {
+                $v = $source[$key] ?? '';
+            } else {
+                $v = $source->$key ?? '';
+            }
+            return is_scalar($v) ? trim((string) $v) : '';
+        };
+
+        $nome = $get($address, 'nome');
+        $logradouro = $get($address, 'logradouro');
+        $numero = $get($address, 'numero');
+        $bairro = $get($address, 'bairro');
+        $cidade = $get($address, 'cidade');
+        $estado = $get($address, 'estado');
+        $cep = $get($address, 'cep');
+        $complemento = $get($address, 'complemento');
+
+        if (!$nome && !$logradouro && !$numero && !$bairro && !$cidade && !$estado && !$cep && !$complemento) {
+            return '';
+        }
+
+        $line = trim(sprintf(
+            '%s, nº %s - %s, %s/%s, %s',
+            $logradouro,
+            $numero,
+            $bairro,
+            $cidade,
+            $estado,
+            $cep
+        ), " \t\n\r\0\x0B,-/");
+
+        if ($complemento !== '') {
+            $line .= sprintf(' (%s)', $complemento);
+        }
+
+        if ($nome !== '') {
+            return $line !== '' ? $nome . ': ' . $line : $nome;
+        }
+
+        return $line;
     }
 
     protected function _getHeader(Job $job) : array {
@@ -30,22 +135,87 @@ class Registrations extends SpreadsheetJob
         /*if($job->owner_properties) {
             $query['@select'] .= ",owner.{{$job->owner_properties}}";
         }*/
-        $query['@select'] .= ',projectName,owner.{name}';
-        $properties = explode(',', $query['@select']);
-        
-        foreach($properties as $property) {
-            if(str_starts_with($property, 'field_')) {
+        $select = $query['@select'] ?? '';
+        if ($select === '' || !preg_match('/(^|,)projectName($|,)/', $select)) {
+            $select .= ($select === '' ? '' : ',') . 'projectName';
+        }
+        if (!preg_match('/owner\.\{[^}]*\bname\b[^}]*\}/', $select)) {
+            $select .= ',owner.{name}';
+        }
+        $query['@select'] = $select;
+        $properties = FieldParser::parse($query['@select']);
+
+        foreach(array_keys($properties) as $property) {
+            if (str_starts_with($property, 'field_')) {
+                // Paths aninhados (ex.: field_121.address_level4) usam o metakey base
+                $base_field = explode('.', $property, 2)[0];
+                $etf = $this->is_entity_type_field($base_field);
+                if ($etf['status']) {
+                    continue;
+                }
+                // Reserva a posição da coluna conforme @select; o título vem do field config abaixo
+                $header[$property] = $property;
+                continue;
+            }
+            if($property == 'singleUrl') {
+                $header[$property] = i::__('Link da inscrição');
                 continue;
             }
 
-            if(str_starts_with($property, 'owner.{')) {
-                $values = $this->extractValues($property);
+            // Ordem alinhada ao bloco de dados (ownerGeo* / geo*), mesmas labels
+            if($property == 'ownerGeoMesorregiao') {
+                $header[$property] = i::__('Divisão geográfica do responsável – Mesorregião');
+                continue;
+            }
+            if($property == 'ownerGeoMunicipio') {
+                $header[$property] = i::__('Divisão geográfica do responsável – Município');
+                continue;
+            }
+            if($property == 'ownerGeoPais') {
+                $header[$property] = i::__('Divisão geográfica do responsável – País');
+                continue;
+            }
+            if($property == 'ownerGeoEstado') {
+                $header[$property] = i::__('Divisão geográfica do responsável – Estado');
+                continue;
+            }
+            if($property == 'ownerGeoMicrorregiao') {
+                $header[$property] = i::__('Divisão geográfica do responsável – Microrregião');
+                continue;
+            }
 
-                foreach($values as $val) {
-                    if($val === 'name') {
-                        $header[$val] = i::__('Responsável pela inscrição');
-                    }
-                }
+            if($property == 'ownerName') {
+                $header[$property] = i::__('Responsável pela inscrição');
+                continue;
+            }
+
+            if($property == 'files') {
+                $header[$property] = i::__('Anexos');
+                continue;
+            }
+
+            if($property == 'score') {
+                $header[$property] = i::__('Pontuação');
+                continue;
+            }
+
+            if($property == 'consolidatedResult') {
+                $header[$property] = i::__('Avaliação');
+                continue;
+            }
+            
+            if($property == 'usingQuota') {
+                $header[$property] = i::__('Cotas aplicadas');
+                continue;
+            }
+
+            if($property == 'quotas') {
+                $header[$property] = i::__('Elegível para as cotas');
+                continue;
+            }
+
+            if($property == 'tiebreaker') {
+                $header[$property] = i::__('Critérios de desempate');
                 continue;
             }
 
@@ -63,8 +233,40 @@ class Registrations extends SpreadsheetJob
                 continue;
             }
 
+            if($property == 'updateTimestamp') {
+                $header['updateDate'] = i::__('Data de atualização');
+                $header['updateTime'] = i::__('Hora de atualização');
+
+                continue;
+            }
+
             if($property == 'projectName') {
                 $header[$property] = i::__('Nome do projeto');
+                continue;
+            }
+
+            if($property == 'eligible') {
+                $header[$property] = i::__('Concorrendo por cota');
+                continue;
+            }
+
+            if($property == 'appliedForQuota') {
+                $header[$property] = i::__('A inscrição está concorrendo por cotas?');
+                continue;
+            }
+
+            if($property == 'editableUntil') {
+                $header[$property] = i::__('Função editar inscrição: Prazo final para edição');
+                continue;
+            }
+
+            if($property == 'editSentTimestamp') {
+                $header[$property] = i::__('Função editar inscrição: Data de envio da edição');
+                continue;
+            }
+
+             if($property == 'editableFields') {
+                unset($header[$property]);
                 continue;
             }
 
@@ -86,19 +288,31 @@ class Registrations extends SpreadsheetJob
                 if($entity_type_field['status']) {
                      
                     if($entity_type_field['ft'] == '@location') {
-                        $header['UF'] = i::__('UF');
-                        $header['Municipio'] = i::__('Município');
+                        if (!isset($header['UF'])) {
+                            $header['UF'] = i::__('UF');
+                        }
+                        if (!isset($header['Municipio'])) {
+                            $header['Municipio'] = i::__('Município');
+                        }
                     }
 
                     if($entity_type_field['ft'] == '@links') {
-                        $header['Links'] = i::__('Links');
+                        if (!isset($header['Links'])) {
+                            $header['Links'] = i::__('Links');
+                        }
                     }
 
                     if($entity_type_field['ft'] == 'pessoaDeficiente') {
-                        $header[$field->fieldName] = $field->title;
+                        $this->setFieldHeaderLabel($header, $field->fieldName, $field->title);
                     }
+
+                    if($entity_type_field['ft'] == 'persons') {
+                        $this->setFieldHeaderLabel($header, $field->fieldName, $field->title);
+                    }
+                    
                 } else {
-                    $header[$field->fieldName] = $field->title;
+                    // Sempre sobrescreve: o 1º loop pode ter reservado a chave com field_*
+                    $this->setFieldHeaderLabel($header, $field->fieldName, $field->title);
                 }
             }
         } while($opportunity = $opportunity->previousPhase);
@@ -139,8 +353,11 @@ class Registrations extends SpreadsheetJob
             }
 
         } while($opportunity = $opportunity->previousPhase);
+        $enalble_quota = ($query_params['@order'] ?? false) === "@quota";
 
-        $result = $opportunity_controller->apiFindRegistrations($job->owner, $query_params);
+        $result = $opportunity_controller->apiFindRegistrations($job->owner, $query_params, $enalble_quota);
+
+        $properties = FieldParser::parse($query_params['@select']);
         
         if (isset($result->registrations) && is_array($result->registrations)) {
             foreach($result->registrations as &$entity) {                
@@ -148,10 +365,182 @@ class Registrations extends SpreadsheetJob
                     $entity_type_field = $this->is_entity_type_field($field->fieldName);
 
                     if($entity_type_field['status']) {
+                       
+                        if ($entity_type_field['ft'] === 'persons' && !empty($entity[$field->fieldName])) {
+                            $persons = json_decode(json_encode($entity[$field->fieldName]),true);
+                            $_persons = [];
+                            $field_config = $field->config ?? [];
+
+                            foreach($persons as $person){
+                                $person_fields = [];
+                                
+                                // Nome
+                                if (isset($field_config['name']) && $field_config['name'] === 'true') {
+                                    $person_fields[] = isset($person['name']) && $person['name'] 
+                                        ? i::__('Nome') . ': ' . $person['name'] 
+                                        : i::__('Nome') . ': ' . i::__('Não informado');
+                                }
+                                
+                                // Nome completo
+                                if (isset($field_config['fullName']) && $field_config['fullName'] === 'true') {
+                                    $person_fields[] = isset($person['fullName']) && $person['fullName'] 
+                                        ? i::__('Nome completo') . ': ' . $person['fullName'] 
+                                        : i::__('Nome completo') . ': ' . i::__('Não informado');
+                                }
+                                
+                                // Nome social
+                                if (isset($field_config['socialName']) && $field_config['socialName'] === 'true') {
+                                    $person_fields[] = isset($person['socialName']) && $person['socialName'] 
+                                        ? i::__('Nome social') . ': ' . $person['socialName'] 
+                                        : i::__('Nome social') . ': ' . i::__('Não informado');
+                                }
+                                
+                                // CPF
+                                if (isset($field_config['cpf']) && $field_config['cpf'] === 'true') {
+                                    $person_fields[] = isset($person['cpf']) && $person['cpf'] 
+                                        ? i::__('CPF') . ': ' . $person['cpf'] 
+                                        : i::__('CPF') . ': ' . i::__('Não informado');
+                                }
+                                
+                                // Renda
+                                if (isset($field_config['income']) && $field_config['income'] === 'true') {
+                                    $person_fields[] = isset($person['income']) && $person['income'] 
+                                        ? i::__('Renda') . ': ' . $person['income'] 
+                                        : i::__('Renda') . ': ' . i::__('Não informado');
+                                }
+                                
+                                // Escolaridade
+                                if (isset($field_config['education']) && $field_config['education'] === 'true') {
+                                    $person_fields[] = isset($person['education']) && $person['education'] 
+                                        ? i::__('Escolaridade') . ': ' . $person['education'] 
+                                        : i::__('Escolaridade') . ': ' . i::__('Não informado');
+                                }
+                                
+                                // Telefone
+                                if (isset($field_config['telephone']) && $field_config['telephone'] === 'true') {
+                                    $person_fields[] = isset($person['telephone']) && $person['telephone'] 
+                                        ? i::__('Telefone') . ': ' . $person['telephone'] 
+                                        : i::__('Telefone') . ': ' . i::__('Não informado');
+                                }
+                                
+                                // Email
+                                if (isset($field_config['email']) && $field_config['email'] === 'true') {
+                                    $person_fields[] = isset($person['email']) && $person['email'] 
+                                        ? i::__('Email') . ': ' . $person['email'] 
+                                        : i::__('Email') . ': ' . i::__('Não informado');
+                                }
+                                
+                                // Raça/Cor
+                                if (isset($field_config['race']) && $field_config['race'] === 'true') {
+                                    $person_fields[] = isset($person['race']) && $person['race'] 
+                                        ? i::__('Raça/Cor') . ': ' . $person['race'] 
+                                        : i::__('Raça/Cor') . ': ' . i::__('Não informado');
+                                }
+                                
+                                // Gênero
+                                if (isset($field_config['gender']) && $field_config['gender'] === 'true') {
+                                    $person_fields[] = isset($person['gender']) && $person['gender'] 
+                                        ? i::__('Gênero') . ': ' . $person['gender'] 
+                                        : i::__('Gênero') . ': ' . i::__('Não informado');
+                                }
+                                
+                                // Orientação sexual
+                                if (isset($field_config['sexualOrientation']) && $field_config['sexualOrientation'] === 'true') {
+                                    $person_fields[] = isset($person['sexualOrientation']) && $person['sexualOrientation'] 
+                                        ? i::__('Orientação sexual') . ': ' . $person['sexualOrientation'] 
+                                        : i::__('Orientação sexual') . ': ' . i::__('Não informado');
+                                }
+                                
+                                // Deficiências
+                                if (isset($field_config['deficiencies']) && $field_config['deficiencies'] === 'true') {
+                                    $deficiencies_str = '';
+                                    if (isset($person['deficiencies'])) {
+                                        $deficiencies = $person['deficiencies'];
+
+                                        if ($deficiencies instanceof \stdClass) {
+                                            $deficiencies = (array) $deficiencies;
+                                        }
+
+                                        if (is_array($deficiencies)) {
+                                            $deficiencies_filtered = array_filter($deficiencies, function($v) { return $v !== false && $v !== null && $v !== ''; });
+                                            $deficiencies_str = !empty($deficiencies_filtered) 
+                                                ? implode(', ', array_keys($deficiencies_filtered))
+                                                : i::__('Não informado');
+                                        } else {
+                                            $deficiencies_str = $deficiencies ?: i::__('Não informado');
+                                        }
+                                    } else {
+                                        $deficiencies_str = i::__('Não informado');
+                                    }
+                                    $person_fields[] = i::__('Deficiências') . ': ' . $deficiencies_str;
+                                }
+                                
+                                // Comunidade tradicional
+                                if (isset($field_config['comunty']) && $field_config['comunty'] === 'true') {
+                                    $person_fields[] = isset($person['comunty']) && $person['comunty'] 
+                                        ? i::__('Comunidade tradicional') . ': ' . $person['comunty'] 
+                                        : i::__('Comunidade tradicional') . ': ' . i::__('Não informado');
+                                }
+                                
+                                // Áreas de atuação
+                                if (isset($field_config['area']) && $field_config['area'] === 'true') {
+                                    $area_str = '';
+                                    if (isset($person['area']) && $person['area']) {
+                                        if (is_array($person['area'])) {
+                                            $area_str = implode(', ', array_filter($person['area']));
+                                        } else {
+                                            $area_str = $person['area'];
+                                        }
+                                    }
+                                    $person_fields[] = $area_str 
+                                        ? i::__('Áreas de atuação') . ': ' . $area_str 
+                                        : i::__('Áreas de atuação') . ': ' . i::__('Não informado');
+                                }
+                                
+                                // Funções/Profissões
+                                if (isset($field_config['funcao']) && $field_config['funcao'] === 'true') {
+                                    $funcao_str = '';
+                                    if (isset($person['funcao']) && $person['funcao']) {
+                                        if (is_array($person['funcao'])) {
+                                            $funcao_str = implode(', ', array_filter($person['funcao']));
+                                        } else {
+                                            $funcao_str = $person['funcao'];
+                                        }
+                                    }
+                                    $person_fields[] = $funcao_str 
+                                        ? i::__('Funções/Profissões') . ': ' . $funcao_str 
+                                        : i::__('Funções/Profissões') . ': ' . i::__('Não informado');
+                                }
+                                
+                                // Relação (sempre incluído se presente, independente de config)
+                                if (isset($person['relationship']) && $person['relationship']) {
+                                    $person_fields[] = i::__('Relação') . ': ' . $person['relationship'];
+                                }
+                                
+                                // Função (sempre incluído se presente, independente de config)
+                                if (isset($person['function']) && $person['function']) {
+                                    $person_fields[] = i::__('Função') . ': ' . $person['function'];
+                                }
+                                
+                                // Se não houver campos configurados, usa comportamento padrão (nome e CPF)
+                                if (empty($person_fields)) {
+                                    if ((isset($person['name']) && $person['name']) || (isset($person['cpf']) && $person['cpf'])) {
+                                        $_name = isset($person['name']) && $person['name'] ? $person['name'] : i::__('Nome não informado');
+                                        $_cpf = isset($person['cpf']) && $person['cpf'] ? $person['cpf'] : i::__('CPF não informado');
+                                        $_persons[] = $_name . " : " . $_cpf;
+                                    }
+                                } else {
+                                    // Se houver campos configurados, usa a formatação completa
+                                    $_persons[] = implode(' | ', $person_fields);
+                                }
+                            }
+                            $entity[$field->fieldName] = implode(' || ', $_persons );
+                        }
+
                         if($entity_type_field['ft'] == '@location') {
-                             
-                            $entity['UF'] = $entity[$field->fieldName]->En_Estado;
-                            $entity['Municipio'] = $entity[$field->fieldName]->En_Municipio;
+                            $location = $entity[$field->fieldName] ?? null;
+                            $entity['UF'] = self::_getLocationValue($location, 'address_level2', 'En_Estado');
+                            $entity['Municipio'] = self::_getLocationValue($location, 'address_level4', 'En_Municipio');
                             unset($entity[$field->fieldName]);
                         }
 
@@ -177,7 +566,26 @@ class Registrations extends SpreadsheetJob
                         }
                     }
 
-                    if ($entity[$field->fieldName] instanceof \stdClass) {
+                    if ($file_url = $this->extractAgentFileUrl($entity[$field->fieldName] ?? null)) {
+                        $entity[$field->fieldName] = $file_url;
+                        continue;
+                    }
+
+                    if ($field->fieldType === 'addresses' && !empty($entity[$field->fieldName])) {
+                        $addresses = json_decode(json_encode($entity[$field->fieldName]), true);
+                        $entity[$field->fieldName] = self::_formatAddressesForSpreadsheet(
+                            is_array($addresses) ? $addresses : []
+                        );
+                    }
+
+                    if ($field->fieldType === 'custom-table') {
+                        $entity[$field->fieldName] = self::_formatCustomTableForSpreadsheet(
+                            (array) ($field->config['columns'] ?? []),
+                            (array) ($entity[$field->fieldName] ?? [])
+                        );
+                    }
+
+                    if (isset($entity[$field->fieldName]) && $entity[$field->fieldName] instanceof \stdClass) {
                         $entity[$field->fieldName] = (array) $entity[$field->fieldName];
                     }	
 
@@ -214,12 +622,12 @@ class Registrations extends SpreadsheetJob
                             }
                         }, $entity[$field->fieldName]);
 
-                        $formatted_values = implode(', ', $values);
+                        $formatted_values = implode(', ', array_filter($values));
                         $entity[$field->fieldName] = $formatted_values;
                     }
 
-                    if ($field->fieldType == 'checkbox') {
-                        $entity[$field->fieldName] = in_array($entity[$field->fieldName], [1, '1', true]) ? 'Sim' : $entity[$field->fieldName];
+                    if (isset($entity[$field->fieldName]) && (is_string($entity[$field->fieldName]) || is_null($entity[$field->fieldName]))) {
+                        $entity[$field->fieldName] = $this->cleanTextForExport($entity[$field->fieldName]);
                     }
                 }
 
@@ -227,7 +635,11 @@ class Registrations extends SpreadsheetJob
                 unset($entity['evaluationResultString']);
 
                 if(isset($entity['agentsData']) && is_array($entity['agentsData'])) {
-                    $entity['name'] = $entity['agentsData']['owner']['name'];
+                    if($entity['status'] == "0") {
+                        $entity['ownerName'] = $entity['owner']['name'];
+                    } else {
+                        $entity['ownerName'] = $entity['agentsData']['owner']['name'] ?? '';
+                    }
                 }
 
                 unset($entity['agentsData']);
@@ -240,7 +652,38 @@ class Registrations extends SpreadsheetJob
 
                     $entity = array_merge($entity, $owner_info);
                 }
-                
+
+                if (isset($entity['files']) && $entity['files']) {
+                    $entity['files'] = $app->createUrl('registration', 'createZipFiles', [$entity['id']]);
+                }
+
+                // Dados do owner já foram mesclados em $entity (owner foi unset); geo* estão no nível raiz
+                $geoMesorregiao = $entity['geoMesorregiao'] ?? $entity['geoMesoregiao'] ?? null;
+                if ($geoMesorregiao !== null) {
+                    $entity['ownerGeoMesorregiao'] = $geoMesorregiao;
+                    $entity['ownerGeoMesoregiao'] = $geoMesorregiao; // fallback para typo no @select
+                    unset($entity['geoMesorregiao'], $entity['geoMesoregiao']);
+                }
+
+                if (isset($entity['geoMunicipio'])) {
+                    $entity['ownerGeoMunicipio'] = $entity['geoMunicipio'];
+                    unset($entity['geoMunicipio']);
+                }
+
+                if (isset($entity['geoPais'])) {
+                    $entity['ownerGeoPais'] = $entity['geoPais'];
+                    unset($entity['geoPais']);
+                }
+
+                if (isset($entity['geoEstado'])) {
+                    $entity['ownerGeoEstado'] = $entity['geoEstado'];
+                    unset($entity['geoEstado']);
+                }
+
+                if (isset($entity['geoMicrorregiao'])) {
+                    $entity['ownerGeoMicrorregiao'] = $entity['geoMicrorregiao'];
+                    unset($entity['geoMicrorregiao']);
+                }
                 if(isset($entity['sentTimestamp']) && !is_null($entity['sentTimestamp'])) {
                     $entity['sentDate'] = $entity['sentTimestamp']->format('d-m-Y');
                     $entity['sentTime'] = $entity['sentTimestamp']->format('H:i:s');
@@ -255,25 +698,72 @@ class Registrations extends SpreadsheetJob
 
                 unset($entity['createTimestamp']);
 
+                if(isset($entity['updateTimestamp']) && !is_null($entity['updateTimestamp'])) {
+                    $entity['updateDate'] = $entity['updateTimestamp']->format('d-m-Y');
+                    $entity['updateTime'] = $entity['updateTimestamp']->format('H:i:s');
+                }
+
+                unset($entity['updateTimestamp']);
+                
+                if (isset($entity['consolidatedResult']) && !is_null($entity['consolidatedResult'])) {
+                    $map = [
+                        "valid" => i::__("Válido"),
+                        "invalid" => i::__( "Inválido")
+                    ];
+                    if (isset($map[$entity['consolidatedResult']])) {
+                        $entity['consolidatedResult'] = $map[$entity['consolidatedResult']];
+                    }
+                }
+                
                 if(isset($entity['status']) && !is_null($entity['status'])) {
                     $entity['status'] = $this->getStatusName($entity['status']);
                 }
 
-                if (isset($entity['number'])) {
-                    if ($job->extension == 'csv') {
-                        $number = "=HIPERLINK(\"" . $app->createUrl('registration', 'view', [$entity['id']]) . "\"; \"" . $entity['number'] . "\")";
-                    }
-
-                    if ($job->extension == 'xlsx') {
-                        $number = "=HYPERLINK(\"" . $app->createUrl('registration', 'view', [$entity['id']]) . "\", \"" . $entity['number'] . "\")";
-                    }
-
-                    if ($job->extension == 'ods') {
-                        $number = "=HYPERLINK(\"" . $app->createUrl('registration', 'view', [$entity['id']]) . "\"; \"" . $entity['number'] . "\")";
-                    }
-
-                    $entity['number'] = $number;
+                if (isset($entity['singleUrl'])) {
+                    $url = $app->createUrl('registration', 'view', [$entity['id']]);
+                    $entity['singleUrl'] = $url;
                 }
+
+                 if (isset($entity['number'])) {
+                    $entity['number'] = $entity['number'];
+                }
+
+                if(isset($entity['goalStatuses'])) {
+                    $entity['goalStatuses'] = $entity['goalStatuses']->{10} . '/' . $entity['goalStatuses']->numGoals . " " . i::__('concluídas');
+                }
+                
+                if(isset($entity['eligible'])) {
+                    $entity['eligible'] = $entity['eligible'] ?  i::__('Sim') : i::__('Não');
+                }
+
+                if(array_key_exists('appliedForQuota', $entity)) {
+                    $applied = $entity['appliedForQuota'];
+                    $is_yes = $applied === true || $applied === 'true' || $applied === 1 || $applied === '1';
+                    $entity['appliedForQuota'] = $is_yes ? i::__('Sim') : i::__('Não');
+                }
+
+                if(isset($entity['appliedPointReward'])) {
+                    $entity['appliedPointReward'] = $this->formatAppliedPointReward($entity['appliedPointReward']);
+                }
+
+                if(isset($entity['editableUntil'])) {
+                    $date = $entity['editableUntil'];
+                    $entity['editableUntil'] = $date->format('d/m/Y H:i:s');
+                }
+
+                if(isset($entity['editSentTimestamp'])) {
+                    $editSentTimestamp = $entity['editSentTimestamp'];
+                    $entity['editableUntil'] = $editSentTimestamp->format('d/m/Y H:i:s');
+                }
+
+                if(isset($entity['quotas']) && $entity['quotas']) {
+                    $entity['quotas'] = implode(",", $entity['quotas']);
+                }
+
+                if (isset($entity['tiebreaker']) && is_array($entity['tiebreaker'])) {
+                    $entity['tiebreaker'] = $this->formatTiebreakerForSpreadsheet($entity['tiebreaker']);
+                }
+                
                 $entity = $this->replaceArraysWithNull($entity);
             }
         }
@@ -307,21 +797,138 @@ class Registrations extends SpreadsheetJob
         return "registrationsSpreadsheet:{$md5}";
     }
 
+    /**
+     * Extrai a URL de um valor de campo anexo (agent type=file).
+     *
+     * Formato esperado (RegistrationFieldTypes::fetchAgentFileFieldFromEntity):
+     * ['id' => int, 'name' => string, 'url' => string, 'mimeType' => string]
+     *
+     * @param mixed $value
+     * @return string|null URL do arquivo, ou null se não for um anexo.
+     */
+    public function extractAgentFileUrl($value): ?string
+    {
+        if ($value instanceof \stdClass) {
+            $value = (array) $value;
+        }
+
+        if (!is_array($value) || $value === [] || array_is_list($value)) {
+            return null;
+        }
+
+        $url = $value['url'] ?? null;
+        if (!is_string($url) || $url === '') {
+            return null;
+        }
+
+        if (!isset($value['name']) && !isset($value['id']) && !isset($value['mimeType'])) {
+            return null;
+        }
+
+        return $url;
+    }
+
+    private function formatAppliedPointReward($applied_point_reward): string
+    {
+        if (is_array($applied_point_reward)) {
+            $applied_point_reward = (object) $applied_point_reward;
+        }
+
+        if (!is_object($applied_point_reward) || ($applied_point_reward->raw ?? null) === null) {
+            return '';
+        }
+
+        if (($applied_point_reward->type ?? 'percentage') === 'fixed') {
+            $fixed = (float) ($applied_point_reward->fixed ?? 0);
+            return $fixed > 0 ? '+' . $this->formatBonusNumber($fixed) . ' ' . i::__('pt(s)') : '';
+        }
+
+        $percentage = (float) ($applied_point_reward->percentage ?? 0);
+        return $percentage > 0 ? $this->formatBonusNumber($percentage) . '%' : '';
+    }
+
+    private function formatBonusNumber(float $value): string
+    {
+        return fmod($value, 1.0) === 0.0 ? (string) (int) $value : (string) $value;
+    }
+
+    /**
+     * Formats the registration's tiebreaker criteria for the spreadsheet cell,
+     * mirroring the registrations table display: "{name}: {value}", one
+     * criterion per line.
+     *
+     * The submissionDate criterion may arrive either as a \DateTime instance or
+     * as a raw SQL datetime string ("Y-m-d H:i:s"), depending on the path that
+     * assembled the tiebreaker data; both are rendered as "d/m/Y H:i:s".
+     */
+    private function formatTiebreakerForSpreadsheet(array $tiebreaker): string
+    {
+        $lines = [];
+
+        foreach ($tiebreaker as $name => $value) {
+            if ($value instanceof \DateTime) {
+                $value = $value->format('d/m/Y H:i:s');
+            } elseif (is_bool($value)) {
+                $value = $value ? 'true' : 'false';
+            } elseif (is_array($value) || is_object($value)) {
+                $value = json_encode($value);
+            } elseif ($value === null) {
+                $value = '';
+            } elseif (is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/', $value)) {
+                $value = (new \DateTime($value))->format('d/m/Y H:i:s');
+            } else {
+                $value = (string) $value;
+            }
+
+            $lines[] = "{$name}: {$value}";
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Define o rótulo do campo na planilha, preservando a ordem da coluna já reservada
+     * e atualizando paths aninhados (ex.: field_121.address_level4).
+     */
+    private function setFieldHeaderLabel(array &$header, string $field_name, string $title): void
+    {
+        $header[$field_name] = $title;
+
+        foreach (array_keys($header) as $key) {
+            if (str_starts_with($key, $field_name . '.')) {
+                $header[$key] = $title;
+            }
+        }
+    }
+
     function is_entity_type_field($field_name) {
         $app = App::i();
         $result = ['status' => false];
         
         $def = $app->getRegisteredMetadataByMetakey($field_name, Registration::class);
-        if ($def && $def->config['type'] == 'agent-owner-field') {
-            $field_config = $def->config['registrationFieldConfiguration'];
-            $ft = $field_config->config['entityField'] ?? null;
-    
-            if(($ft == '@location') 
-                || ($ft == '@links')
-                || ($ft == 'pessoaDeficiente')
-            ) {
+
+        if($def) {
+            if ($def->config['type'] == 'agent-owner-field') {
+                $field_config = $def->config['registrationFieldConfiguration'];
+                $ft = $field_config->config['entityField'] ?? null;
+        
+                if(($ft == '@location') 
+                    || ($ft == '@links')
+                    || ($ft == 'pessoaDeficiente')
+                ) {
+                    $result['status'] = true;
+                    $result['ft'] = $ft;
+                }
+            }
+
+            if($def->config['type'] == 'persons') {
                 $result['status'] = true;
-                $result['ft'] = $ft;
+                $result['ft'] = 'persons';
+            }
+
+            if($def->config['type'] == 'location') {
+                $result['status'] = true;
+                $result['ft'] = '@location';
             }
         }
 

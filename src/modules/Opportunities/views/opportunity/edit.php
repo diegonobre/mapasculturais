@@ -22,7 +22,7 @@ $this->import('
     opportunity-subscribe-results
 ');
 
-$this->addOpportunityPhasesToJs();
+$this->addOpportunityPhasesToJs($entity);
 
 $label = $this->isRequestedEntityMine() ? i::__('Minhas oportunidades') : i::__('Oportunidades');
 $this->breadcrumb = [
@@ -42,7 +42,7 @@ $this->breadcrumb = [
             <opportunity-basic-info :entity="entity"></opportunity-basic-info>
         </mc-tab>
         <mc-tab label="<?= i::__('Configuração de fases') ?>" slug="config">
-            <opportunity-phases-config :entity="entity" tabs='config'></opportunity-phases-config>
+            <opportunity-phases-config :entity="entity" tab="config"></opportunity-phases-config>
         </mc-tab>
         <mc-tab label="<?= i::__('Inscrições e Resultados') ?>" slug="registrations">
             <opportunity-subscribe-results :entity="entity" tab="registrations"></opportunity-subscribe-results>

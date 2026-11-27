@@ -22,19 +22,24 @@ while(true){
 '
 
 mkdir -p /var/www/var/DoctrineProxies /var/www/var/logs
+mkdir -p /var/www/public/entity-table-columns
 
 touch /var/www/var/logs/app.log
 
 chown -R www-data: /var/www/var/DoctrineProxies /var/www/var/logs
+chown -R www-data:www-data /var/www/public/entity-table-columns
+chmod -R 775 /var/www/public/entity-table-columns
+
+sudo -E -u www-data /var/www/scripts/db-update.sh
+sudo -E -u www-data /var/www/scripts/mc-db-updates.sh
 
 if ! cmp /var/www/version.txt /var/www/var/private-files/deployment-version >/dev/null 2>&1
 then
-    /var/www/scripts/deploy.sh
+    sudo -E -u www-data /var/www/scripts/compile-sass.sh
+    sudo -E -u www-data /var/www/src/tools/doctrine orm:generate-proxies
     cp /var/www/version.txt /var/www/var/private-files/deployment-version
-else
-    /var/www/scripts/db-update.sh
-    /var/www/scripts/mc-db-updates.sh
 fi
+
 
 if [ $BUILD_ASSETS = "1" ]; then
     chown www-data: /var/www/public/assets
@@ -43,11 +48,16 @@ if [ $BUILD_ASSETS = "1" ]; then
     pnpm run dev
 fi
 
+chown www-data:www-data /var/www/public/assets 
+chown www-data:www-data /var/www/public/files 
+chown www-data:www-data /var/www/var/private-files
+
 cd /
 touch /nohup.out
 chown www-data: /nohup.out
 sudo -E -u www-data nohup /jobs-cron.sh >> /dev/stdout &
 sudo -E -u www-data nohup /recreate-pending-pcache-cron.sh >> /dev/stdout &
+sudo -E -u www-data nohup /cleanup-orphan-assets-cron.sh >> /dev/stdout &
 
 tail -f /nohup.out > /dev/stdout &
 touch /mapas-ready
