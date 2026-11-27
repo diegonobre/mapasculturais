@@ -1,0 +1,6 @@
+FROM postgis/postgis:14-master
+
+# Demo: o banco inicia com o dump de desenvolvimento (carregado apenas quando o volume de dados está vazio)
+COPY dev/db/dump.sql /dump.sql
+COPY docker/production/load-dump.sh /docker-entrypoint-initdb.d/20_load-dump.sh
+RUN chmod +x /docker-entrypoint-initdb.d/20_load-dump.sh
