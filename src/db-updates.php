@@ -2403,13 +2403,18 @@ $$
         $fileName = "dbupdate_RegistrationFieldConfiguration.txt";
         $dir = PRIVATE_FILES_PATH . "dbupdate_documento";
         if (!file_exists($dir)) {
-            mkdir($dir, 0775);
+            mkdir($dir, 0775, true);
         }
 
         $path = $dir . "/" . $fileName;
-        $fp = fopen($path, "wb");
-        fwrite($fp, $txt);
-        fclose($fp);
+        $fp = @fopen($path, "wb");
+        if ($fp) {
+            fwrite($fp, $txt);
+            fclose($fp);
+        } else {
+            // o log em arquivo é opcional: não deve interromper as demais atualizações do banco
+            echo "\nNão foi possível gravar o arquivo {$path}\n";
+        }
     },
     "seta como vazio campo escolaridade do agent caso esteja com valor não informado" => function() use ($conn, $app){
         /** @var App $app */
