@@ -2494,6 +2494,14 @@ $$
         }
     },
 
+    // IMPORTANTE: esta atualização precisa vir ANTES de qualquer atualização que enfileire o recálculo
+    // de cache de permissões (App::persistPCachePendingQueue), pois ela grava na coluna usr_id.
+    'adiciona coluna user_id à tabela pending_permission_cache' => function() use($conn) {
+        if (!__column_exists('permission_cache_pending', 'usr_id')) {
+            __exec('ALTER TABLE permission_cache_pending ADD usr_id INT DEFAULT NULL;');
+        }
+    },
+
     'corrige permissão de avaliadores que tem avaliação mas não possui permissão de avaliar pela regra configurada' => function() use($conn) {
         $regs = $conn->fetchFirstColumn(" 
             SELECT 
@@ -2514,10 +2522,6 @@ $$
         }
 
         $app->persistPCachePendingQueue();
-    },
-
-    'adiciona coluna user_id à tabela pending_permission_cache' => function() use($conn) {
-        __exec('ALTER TABLE permission_cache_pending ADD usr_id INT DEFAULT NULL;');
     },
 
     'limpeza da tabela de pcache' => function() use($conn) {
