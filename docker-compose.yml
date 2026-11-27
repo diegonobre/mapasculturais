@@ -39,14 +39,15 @@ services:
       - ./docker-data/sessions:/data
 
   db:
-    image: postgis/postgis:14-master
+    build:
+      context: ./
+      dockerfile: docker/production/Dockerfile.db
     restart: unless-stopped
     environment:
       - POSTGRES_PASSWORD=mapas
       - POSTGRES_USER=mapas
       - POSTGRES_DB=mapas
     volumes:
-      - ./docker/db:/docker-entrypoint-initdb.d
       - ./docker-data/db-data:/var/lib/postgresql/data
 
   nginx:
