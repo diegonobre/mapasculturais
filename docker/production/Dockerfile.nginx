@@ -1,0 +1,7 @@
+FROM nginx:latest
+
+# versão sem ssl. Para usar ssl, troque por docker/production/nginx-ssl.conf
+COPY docker/production/nginx.conf /etc/nginx/conf.d/default.conf
+
+# o nginx só encaminha .php para o php-fpm; o index.php real existe apenas no container da aplicação
+RUN mkdir -p /var/www/html && : > /var/www/html/index.php
