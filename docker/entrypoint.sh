@@ -30,6 +30,11 @@ chown -R www-data: /var/www/var/DoctrineProxies /var/www/var/logs
 chown -R www-data:www-data /var/www/public/entity-table-columns
 chmod -R 775 /var/www/public/entity-table-columns
 
+# os diretórios abaixo (normalmente volumes montados do host) precisam existir e ser graváveis pelo www-data
+# ANTES das atualizações do banco, pois algumas delas gravam arquivos em private-files
+mkdir -p /var/www/public/assets /var/www/public/files /var/www/var/private-files
+chown www-data:www-data /var/www/public/assets /var/www/public/files /var/www/var/private-files
+
 sudo -E -u www-data /var/www/scripts/db-update.sh
 sudo -E -u www-data /var/www/scripts/mc-db-updates.sh
 

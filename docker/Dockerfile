@@ -105,6 +105,7 @@ COPY docker/entrypoint.sh /entrypoint.sh
 COPY version.txt /var/www/version.txt
 
 COPY docker/production/php.ini /usr/local/etc/php/php.ini
+COPY docker/production/www.conf /usr/local/etc/php-fpm.d/www.conf
 
 COPY docker/timezone.ini /usr/local/etc/php/conf.d/timezone.ini
 

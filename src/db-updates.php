@@ -2403,13 +2403,18 @@ $$
         $fileName = "dbupdate_RegistrationFieldConfiguration.txt";
         $dir = PRIVATE_FILES_PATH . "dbupdate_documento";
         if (!file_exists($dir)) {
-            mkdir($dir, 0775);
+            mkdir($dir, 0775, true);
         }
 
         $path = $dir . "/" . $fileName;
-        $fp = fopen($path, "wb");
-        fwrite($fp, $txt);
-        fclose($fp);
+        $fp = @fopen($path, "wb");
+        if ($fp) {
+            fwrite($fp, $txt);
+            fclose($fp);
+        } else {
+            // o log em arquivo é opcional: não deve interromper as demais atualizações do banco
+            echo "\nNão foi possível gravar o arquivo {$path}\n";
+        }
     },
     "seta como vazio campo escolaridade do agent caso esteja com valor não informado" => function() use ($conn, $app){
         /** @var App $app */
@@ -2494,6 +2499,14 @@ $$
         }
     },
 
+    // IMPORTANTE: esta atualização precisa vir ANTES de qualquer atualização que enfileire o recálculo
+    // de cache de permissões (App::persistPCachePendingQueue), pois ela grava na coluna usr_id.
+    'adiciona coluna user_id à tabela pending_permission_cache' => function() use($conn) {
+        if (!__column_exists('permission_cache_pending', 'usr_id')) {
+            __exec('ALTER TABLE permission_cache_pending ADD usr_id INT DEFAULT NULL;');
+        }
+    },
+
     'corrige permissão de avaliadores que tem avaliação mas não possui permissão de avaliar pela regra configurada' => function() use($conn) {
         $regs = $conn->fetchFirstColumn(" 
             SELECT 
@@ -2514,10 +2527,6 @@ $$
         }
 
         $app->persistPCachePendingQueue();
-    },
-
-    'adiciona coluna user_id à tabela pending_permission_cache' => function() use($conn) {
-        __exec('ALTER TABLE permission_cache_pending ADD usr_id INT DEFAULT NULL;');
     },
 
     'limpeza da tabela de pcache' => function() use($conn) {
