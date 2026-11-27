@@ -4,6 +4,12 @@ globalThis.__ = (key, componentName, replacements) => {
 }
 
 globalThis.Utils = {
+    _uidCounter: 0,
+
+    uid() {
+        return `uid-${++this._uidCounter}-${Date.now().toString(36)}`;
+    },
+
     getTexts(componentName) {
         const texts = $MAPAS.gettext?.[`component:${componentName}`] || {};
         return (key, replacements) => {
@@ -67,6 +73,11 @@ globalThis.Utils = {
             }
         }
         return false;
+    },
+
+    isEvaluationFieldVisible(fields, key) {
+        const value = fields?.[key];
+        return value === true || value === 'true';
     },
 
     createUrl(controllerId, action_name, args) {
@@ -262,7 +273,18 @@ globalThis.Utils = {
             return "https://" + socialMedia + ".com/in/" + entity[socialMedia];
         }
         if(socialMedia == 'spotify' ){
-            return "https://open." + socialMedia + ".com/user/" + entity[socialMedia];
+            const value = entity[socialMedia];
+            if (!value) {
+                return '';
+            }
+            // Suporta formato "type:id" ou apenas "id" (assume user)
+            const parts = value.split(':');
+            if (parts.length === 2) {
+                const [type, id] = parts;
+                return `https://open.spotify.com/${type}/${id}`;
+            }
+            // Assume user se não tiver tipo
+            return `https://open.spotify.com/user/${value}`;
         }
         return "https://" + socialMedia + ".com/" + entity[socialMedia];
     },

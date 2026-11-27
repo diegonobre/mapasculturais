@@ -345,6 +345,16 @@ trait EntityMetadata{
         if($metadata_object->value !== $value){
             $this->__changedMetadata[$meta_key] = ['key'=> $meta_key, 'oldValue'=> $metadata_object->value, 'newValue'=> $value];
             $metadata_object->value = $value;
+            
+            // CRÍTICO: Notificar o Doctrine que o objeto mudou
+            // Isso força o UnitOfWork a reconhecer a mudança e executar UPDATE
+            if (!$metadata_object->isNew() && $app->em->contains($metadata_object)) {
+                $app->em->getUnitOfWork()->recomputeSingleEntityChangeSet(
+                    $app->em->getClassMetadata(get_class($metadata_object)),
+                    $metadata_object
+                );
+            }
+            
             if (property_exists($this, 'updateTimestamp')) {
                 $this->updateTimestamp = new \DateTime;
             }
@@ -363,12 +373,12 @@ trait EntityMetadata{
 
         foreach($metas as $meta_key => $metadata_definition){
             $metadata_object = $this->getMetadata($meta_key, true);
-
-
-            if(!$metadata_definition->is_required && (is_null($metadata_object) || !$metadata_object->value))
-                continue;
-
+          
             $val = is_object($metadata_object) ? $metadata_object->value : null;
+
+            if ((is_null($metadata_object) || !$metadata_object->value) && !$metadata_definition->shouldValidate($this, $val)) {
+                continue;
+            }
 
             $unserialize = $metadata_definition->unserialize;
             if (is_callable($unserialize)) {
@@ -394,10 +404,11 @@ trait EntityMetadata{
      *
      * @see \MapasCulturais\Entity::save()
      */
-    public function saveMetadata(){
+    public function saveMetadata(bool $flush = true){
         foreach(array_keys($this->__changedMetadata) as $meta_key){
             $metadata_object = $this->getMetadata($meta_key, true);
-            $metadata_object->save(true);
+            $metadata_object->save($flush);
+            
         }
     }
 

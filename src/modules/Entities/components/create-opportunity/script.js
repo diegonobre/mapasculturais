@@ -10,9 +10,9 @@ app.component('create-opportunity', {
 
     data() {
         return {
+            continuousFlowDate: $MAPAS.config.createOpportunity.date,
             entity: null,
             fields: [],
-            entityTypeSelected: null,
         }
     },
 
@@ -20,6 +20,83 @@ app.component('create-opportunity', {
         editable: {
             type: Boolean,
             default: true
+        },
+    },
+
+    watch: {
+        'entity.isContinuousFlow'(newVal, oldValue) {
+            if(Boolean(newVal) != Boolean(oldValue)){
+                if (!newVal) {
+                    this.entity.hasEndDate = false;
+                    this.entity.continuousFlow = null;
+                    this.entity.publishedRegistrations = false;
+
+                    if (this.entity.registrationFrom && this.entity.registrationFrom._date instanceof Date) {
+                        this.incrementRegistrationTo();
+                    } 
+                       
+                } else {
+                    // Desmarca publicityOnly se marcar continuousFlow
+                    if (this.entity.publicityOnly) {
+                        this.entity.publicityOnly = false;
+                    }
+                    
+                    const myDate = new McDate(new Date(this.continuousFlowDate));
+                    
+                    this.entity.continuousFlow = myDate.sql('full');
+                    this.entity.registrationTo = myDate.sql('full');
+                    this.entity.publishedRegistrations = true;
+
+                    if(!this.entity.registrationFrom){
+                        let actualDate = new Date();
+                        this.entity.registrationFrom = Vue.reactive(new McDate(actualDate));
+                    }
+                }
+            }
+        },
+
+        'entity.publicityOnly'(newVal, oldValue) {
+            if(Boolean(newVal) != Boolean(oldValue)){
+                if (newVal) {
+                    // Desmarca fluxo contínuo se marcar publicityOnly
+                    if (this.entity.isContinuousFlow) {
+                        this.entity.isContinuousFlow = false;
+                        this.entity.hasEndDate = false;
+                        this.entity.continuousFlow = null;
+                    }
+                    
+                    // Garante que as datas sejam obrigatórias
+                    if(!this.entity.registrationFrom){
+                        let actualDate = new Date();
+                        this.entity.registrationFrom = Vue.reactive(new McDate(actualDate));
+                    }
+                    
+                    if (this.entity.registrationFrom && !this.entity.registrationTo) {
+                        this.incrementRegistrationTo();
+                    }
+                }
+            }
+        },
+
+        'entity.hasEndDate'(newVal, oldValue) {
+            if(Boolean(newVal) != Boolean(oldValue)){
+                if (this.entity.isContinuousFlow) {
+                    if(newVal){
+                        this.entity.continuousFlow = null;
+                        this.entity.registrationTo = null;
+                        this.entity.publishedRegistrations = false;
+
+                        if (this.entity.registrationFrom && this.entity.registrationFrom._date instanceof Date) {
+                           this.incrementRegistrationTo();
+                        } 
+
+                    } else {
+                        const myDate = new McDate(new Date(this.continuousFlowDate));
+                        this.entity.continuousFlow = myDate;
+                        this.entity.registrationTo = myDate;
+                    }
+                } 
+            }
         },
     },
 
@@ -38,45 +115,6 @@ app.component('create-opportunity', {
 
             }
         },
-
-        entityType(){
-            switch(this.entity.ownerEntity.__objectType) {
-                case 'project':
-                    return __('projeto', 'create-opportunity');
-                case 'event':
-                    return __('evento', 'create-opportunity');
-                case 'space':
-                    return __('espaço', 'create-opportunity');
-                case 'agent':
-                    return __('agente', 'create-opportunity');
-            }
-        },
-
-        entityColorClass() {
-            switch(this.entity.ownerEntity.__objectType) {
-                case 'project':
-                    return 'project__color';
-                case 'event':
-                    return 'event__color';
-                case 'space':
-                    return 'space__color';
-                case 'agent':
-                    return 'agent__color--dark';
-            }
-        },
-
-        entityColorBorder() {
-            switch(this.entity.ownerEntity.__objectType) {
-                case 'project':
-                    return 'project__border';
-                case 'event':
-                    return 'event__border';
-                case 'space':
-                    return 'space__border';
-                case 'agent':
-                    return 'agent__border--dark';
-            }
-        },
     },
 
     methods: {
@@ -86,7 +124,6 @@ app.component('create-opportunity', {
 
         createEntity() {
             this.entity = new Entity('opportunity');
-            this.entity.type = 1;
             this.entity.terms = { area: [] }
         },
 
@@ -112,29 +149,18 @@ app.component('create-opportunity', {
             });
         },
 
-        setEntity(Entity) {
-            this.entity.ownerEntity = Entity;
-        },
-
-        resetEntity() {
-            this.entity.ownerEntity = null;
-            this.entityTypeSelected = null;
-        },
-
         destroyEntity() {
             // para o conteúdo da modal não sumir antes dela fechar
             setTimeout(() => {
                 this.entity = null;
-                this.entityTypeSelected = null;
             }, 200);
         },
 
-        hasObjectTypeErrors() {
-            return !this.entity.ownerEntity && this.entity.__validationErrors?.objectType;
-        },
-
-        getObjectTypeErrors() {
-            return this.hasObjectTypeErrors() ? this.entity.__validationErrors?.objectType : [];
+        incrementRegistrationTo (){
+            let newDate = new Date(this.entity.registrationFrom._date);
+            newDate.setDate(newDate.getDate() + 2);
+    
+            this.entity.registrationTo = new McDate(newDate);
         },
     },
 });

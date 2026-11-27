@@ -10,15 +10,19 @@ use MapasCulturais\i;
 $this->import('
     entity-field
     fields-visible-evaluators
+    mc-accordion
     mc-confirm-button
     mc-modal
     opportunity-committee-groups
     opportunity-phase-publish-date-config
+    opportunity-appeal-phase-config
     seals-certifier
+    seal-validator-config
     tiebreaker-criteria-configuration
     v1-embed-tool
 
     affirmative-policies--geo-quota-configuration
+    opportunity-phase-config-status
 ');
 
 $evaluation_methods = $app->getRegisteredEvaluationMethods();
@@ -31,20 +35,11 @@ $evaluation_methods = $app->getRegisteredEvaluationMethods();
                 <div class="grid-12">
                     <entity-field :entity="phase" prop="name" :autosave="3000" classes="col-12" label="<?= i::esc_attr__('Título') ?>" hide-required></entity-field>
                     <entity-field :entity="phase" prop="evaluationFrom" :autosave="3000" classes="col-6 sm:col-12" label="<?= i::esc_attr__('Data de início') ?>" :min="fromDateMin?._date" :max="fromDateMax?._date"></entity-field>    
-                    <entity-field v-if="!firstPhase?.isContinuousFlow" :entity="phase" prop="evaluationTo" :autosave="3000" classes="col-6 sm:col-12" label="<?= i::esc_attr__('Data de término') ?>" :min="toDateMin?._date" :max="toDateMax?._date"></entity-field>
+                    <entity-field v-if="!firstPhase?.isContinuousFlow || firstPhase?.hasEndDate" :entity="phase" prop="evaluationTo" :autosave="3000" classes="col-6 sm:col-12" label="<?= i::esc_attr__('Data de término') ?>" :min="toDateMin?._date" :max="toDateMax?._date"></entity-field>
+                    <entity-field v-if="phase.opportunity?.isReportingPhase" :entity="phase.opportunity" prop="allow_proponent_response" :autosave="3000" classes="col-12" ></entity-field>
                 </div>
             </div>
         </section>
-
-        <?php foreach($evaluation_methods as $evaluation_method): ?>
-            <?php $this->applyComponentHook("{$evaluation_method->slug}-config", 'before') ?>
-            <template v-if="phase.type.id == '<?=$evaluation_method->slug?>'">
-                <?php $this->applyComponentHook("{$evaluation_method->slug}-config", 'begin') ?>
-                <?= $this->part("{$evaluation_method->slug}/phase-config") ?>
-                <?php $this->applyComponentHook("{$evaluation_method->slug}-config", 'end') ?>
-            </template>
-            <?php $this->applyComponentHook("{$evaluation_method->slug}-config", 'after') ?>
-        <?php endforeach; ?>
 
         <section class="col-12 evaluation-step__section">
             <?php $this->applyComponentHook("evaluation-step-header", 'before') ?>
@@ -56,40 +51,80 @@ $evaluation_methods = $app->getRegisteredEvaluationMethods();
                 <?php $this->applyComponentHook("evaluation-step-header", 'end') ?>
             </div>
             <?php $this->applyComponentHook("evaluation-step-header", 'after') ?>
-
             <div class="evaluation-step__section-content">
                 <opportunity-committee-groups :entity="phase"></opportunity-committee-groups>
             </div>
         </section>
+        
+        <?php foreach($evaluation_methods as $evaluation_method): ?>
+            <?php $this->applyComponentHook("{$evaluation_method->slug}-config", 'before') ?>
+            <template v-if="phase.type.id == '<?=$evaluation_method->slug?>'">
+                <?php $this->applyComponentHook("{$evaluation_method->slug}-config", 'begin') ?>
+                <?= $this->part("{$evaluation_method->slug}/phase-config") ?>
+                <?php $this->applyComponentHook("{$evaluation_method->slug}-config", 'end') ?>
+            </template>
+            <?php $this->applyComponentHook("{$evaluation_method->slug}-config", 'after') ?>
+        <?php endforeach; ?>
+
+        <?php $this->applyComponentHook("seal-validators-config", 'before') ?>
+        <template v-if="phase.type.id != 'technical'">
+            <?php $this->applyComponentHook("seal-validators-config", 'begin') ?>
+            <section class="col-12 evaluation-step__section">
+                <div class="evaluation-step__section-header">
+                    <?php $this->applyComponentHook("seal-validators-config", 'header') ?>
+                    <div class="evaluation-step__section-label">
+                        <h3><?= i::__('Avaliação automática por selos') ?></h3>
+                    </div>
+                </div>
+                <div class="evaluation-step__section-content">
+                    <seal-validator-config :entity="phase"></seal-validator-config>
+                </div>
+            </section>
+            <?php $this->applyComponentHook("seal-validators-config", 'end') ?>
+        </template>
+        <?php $this->applyComponentHook("seal-validators-config", 'after') ?>
 
         <section class="evaluation-section col-12">
             <fields-visible-evaluators :entity="phase"></fields-visible-evaluators>
         </section>
 
         <section class="evaluation-section col-12">
-            <div class="evaluation-section__header">
-                <span class="title"><?= i::__("Adicionar textos explicativos das avaliações") ?></span>
-            </div>
+            <mc-accordion :withText="true">
+                <template #title>
+                    <div class="evaluation-section__header">
+                        <span class="title"><?= i::__("Adicionar textos explicativos das avaliações") ?></span>
+                    </div>
+                </template>
+                <template #content>
+                    <div class="field evaluation-section__field">
+                        <label for="field-info-general" class="evaluation-section__label semibold"><?= i::__("Texto configuração geral") ?></label>
+                        <textarea id="field-info-general" v-model="phase.infos['general']" @change="savePhase()" class="evaluation-config__area" rows="10"></textarea>
+                    </div>
 
-            <div class="field evaluation-section__field">
-                <label for="field-info-general" class="evaluation-section__label semibold"><?= i::__("Texto configuração geral") ?></label>
-                <textarea id="field-info-general" v-model="phase.infos['general']" @change="savePhase()" class="evaluation-config__area" rows="10"></textarea>
-            </div>
+                    <!-- Keep the category fields in a grid so they keep the original two-column layout inside the accordion content -->
+                    <div class="grid-12">
+                        <div class="col-6 sm:col-12 field evaluation-section__field" v-for="(category, index) in categories">
+                            <label :for="`field-info-${category}`" class="evaluation-section__label semibold" :key="index"> {{ category }}</label>
+                            <textarea :id="`field-info-${category}`" v-model="phase.infos[category]" @change="savePhase()" style="width: 100%" rows="10" class="evaluation-config__input"></textarea>
+                        </div>
+                    </div>
+                </template>
+            </mc-accordion>
         </section>
-
-        <div class="col-6 sm:col-12 field evaluation-section__field" v-for="(category, index) in categories">
-            <label :for="`field-info-${category}`" class="evaluation-section__label semibold" :key="index"> {{ category }}</label>
-            <textarea :id="`field-info-${category}`" v-model="phase.infos[category]" @change="savePhase()" style="width: 100%" rows="10" class="evaluation-config__input"></textarea>
-        </div>
-
-        <opportunity-phase-publish-date-config v-if="!firstPhase?.isContinuousFlow" :phase="phase.opportunity" :phases="phases" hide-button hide-description></opportunity-phase-publish-date-config>
         
-        <seals-certifier :entity="firstPhase" :editable="seals.length > 0"></seals-certifier>
+        <opportunity-phase-config-status :phase="phase.opportunity"></opportunity-phase-config-status>
+
+        <opportunity-phase-publish-date-config :phase="phase.opportunity" :phases="phases" hide-button hide-description></opportunity-phase-publish-date-config>
 
         <template v-if="phase.evaluateSelfApplication">
             <entity-field :entity="phase" type="checkbox" prop="autoApplicationAllowed" label="<?php i::esc_attr_e('Autoaplicação de resultados')?>" :autosave="300" classes="col-12 sm:col-12"></entity-field>
         </template>
+        
+        <seals-certifier :entity="firstPhase" :editable="seals.length > 0"></seals-certifier>
 
+        
+        <opportunity-appeal-phase-config v-if="!firstPhase?.isContinuousFlow" :phase="phase" :phases="phases" :tab="tab"></opportunity-appeal-phase-config>
+        
         <div class="config-phase__line col-12"></div>
 
         <div class="col-12 sm:col-12">
@@ -97,14 +132,31 @@ $evaluation_methods = $app->getRegisteredEvaluationMethods();
         </div>
 
         <div class="phase-delete col-12">
-            <mc-confirm-button message="<?= i::esc_attr__('Confirma a execução da ação?') ?>" @confirm="deletePhase($event, phase, index)">
+            <mc-confirm-button :message="confirmDeleteMessage" @confirm="deletePhase(phase, index)">
                 <template #button="modal">
-                    <button :class="['phase-delete__trash button button--text button--sm', {'disabled' : !phase.currentUserPermissions.remove}]" @click="modal.open()">
+                    <button 
+                        :class="['phase-delete__trash button button--text button--sm', {'disabled' : !phase.currentUserPermissions.remove}]" 
+                        @click="modal.open()"
+                        v-tooltip="!phase.currentUserPermissions.remove ? text('tooltip_nao_pode_excluir_avaliacao') : ''"
+                    >
                         <div class="icon">
                             <mc-icon name="trash" class="secondary__color"></mc-icon>
                         </div>
                         <h5><?= i::__("Excluir fase de avaliação") ?></h5>
                     </button>
+                </template>
+                <template #message="message">
+                    <div class="grid-12">
+                        <div class="col-12">
+                            <p>{{ confirmDeleteMessage }}</p>
+                        </div>
+                        <div class="col-12" v-if="Object.keys(phase.agentRelations || {}).length > 0">
+                            <mc-alert type="warning">
+                                <strong><?= i::__('ATENÇÃO') ?>: </strong> 
+                                <?= i::__('Esta fase possui avaliadores no comitê de avaliação. Remova todos os avaliadores do comitê antes de excluir a fase.') ?>
+                            </mc-alert>
+                        </div>
+                    </div>
                 </template>
             </mc-confirm-button>
         </div>

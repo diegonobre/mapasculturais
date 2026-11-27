@@ -4,16 +4,32 @@ app.component('entity-files-list', {
 
     setup() { 
         // os textos estão localizados no arquivo texts.php deste componente 
-        const text = Utils.getTexts('entity-files-list')
-        return { text }
+        const text = Utils.getTexts('entity-files-list');
+        const messages = useMessages();
+        return { text, messages }
     },
 
     created() {
 
     },
 
+    mounted() {
+    },
+
     computed: {
-        
+        isDocsAnexoList() {
+            const classes = this.classes;
+
+            if (typeof classes === 'string') {
+                return classes.includes('docs-anexo-list');
+            }
+
+            if (Array.isArray(classes)) {
+                return classes.includes('docs-anexo-list');
+            }
+
+            return classes?.['docs-anexo-list'] ?? false;
+        },
     },
 
     props: {
@@ -36,6 +52,12 @@ app.component('entity-files-list', {
         classes: {
             type: [String, Array, Object],
             required: false
+        },
+
+        /** Metadado do agente associado ao FileGroup (ex.: cpfAnexo para docs-cpf). */
+        sealProp: {
+            type: String,
+            required: false,
         },
 
     },
@@ -74,7 +96,17 @@ app.component('entity-files-list', {
 
             this.entity.upload(this.newFile, data).then((response) => {
                 this.$emit('uploaded', this);
-                popover.close()
+                popover.close();
+            })
+            .catch((error) => {
+                const groupMessages = error.data?.[this.group];
+                if (Array.isArray(groupMessages)) {
+                    for (const message of groupMessages) {
+                        this.messages.error(message);
+                    }
+                } else if (groupMessages) {
+                    this.messages.error(groupMessages);
+                }
             });
 
             return true;

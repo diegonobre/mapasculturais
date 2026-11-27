@@ -85,7 +85,7 @@ $this->import('
 
     <div class="col-12" v-if="editable && hasPublicLocation">
         <div class="col-6 sm:col-12 public-location">
-            <entity-field  @change="address()" type="checkbox" classes="public-location__field col-6" :entity="entity" prop="publicLocation" label="<?php i::esc_attr_e('Localização pública')?>">
+            <entity-field  @change="address()" type="checkbox" classes="public-location__field col-6" :entity="entity" prop="publicLocation" label="  <?= $this->text('Public-location', i::__('Localização pública')) ?>">
                 <?php if($this->isEditable()): ?>
                     <template #info>
                         <?php $this->info('cadastro -> configuracoes-entidades -> localizacao-publica') ?>
@@ -96,11 +96,11 @@ $this->import('
         </div>
     </div>
     <div v-if="verifiedAdress()" class="col-12">
-        <p class="entity-location__address">
+        <p v-if="entity.publicLocation" class="entity-location__address">
             <span v-if="entity.endereco">{{entity.endereco}}</span>
             <span v-if="!entity.endereco"><?= i::_e("Sem Endereço"); ?></span>
         </p>
-        <entity-map  :entity="entity" :editable="editable"></entity-map>
+        <entity-map v-if="entity.publicLocation" :entity="entity" :editable="editable"></entity-map>
     </div>
     <?php $this->applyTemplateHook('entity-location','end'); ?>
 </div>

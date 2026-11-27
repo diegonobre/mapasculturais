@@ -11,8 +11,14 @@ use MapasCulturais\i;
 <div v-if="evaluationDetails" v-for="(detail, index) in evaluationDetails" class="registration-results__card">
     <div class="registration-results__card-header">
         <div class="registration-results__card-title">
-            <h4 v-if="detail.valuer" class="registration-results__opinion-title bold">
-                <?= i::__('Parecerista: ') ?> {{detail.valuer.name}}
+            <h4 v-if="detail.valuer && detail.committeeSequentialNumber" class="registration-results__opinion-title bold">
+                <?= i::__('Parecerista: ') ?> #{{detail.committeeSequentialNumber}} - ({{detail.valuer.id}} - {{detail.valuer.name}})
+            </h4>
+            <h4 v-else-if="detail.valuer" class="registration-results__opinion-title bold">
+                <?= i::__('Parecerista: ') ?> #{{index+1}} - ({{detail.valuer.id}} - {{detail.valuer.name}})
+            </h4>
+            <h4 v-else-if="detail.committeeSequentialNumber" class="registration-results__opinion-title bold">
+                <?= i::__('Parecerista: ') ?> #{{detail.committeeSequentialNumber}}
             </h4>
             <h4 v-else class="registration-results__opinion-title bold">
                 <?= i::__('Parecerista: ') ?> #{{index+1}}
@@ -41,24 +47,23 @@ use MapasCulturais\i;
                         <strong> {{item.label}} </strong>
                     </p>
                     <br>
-                    <h5 class="registration-results__opinion-title bold"><?= i::__('Parecer') ?>:</h5>
-                    <div>
-                    <ul>
-                        <li>
-                            {{item.obs}}
-                        </li>
-                    </ul>
-
+                    <div v-if="item.obs">
+                        <h5 class="registration-results__opinion-title bold"><?= i::__('Parecer') ?>:</h5>
+                        <ul>
+                            <li>
+                                {{item.obs}}
+                            </li>
+                        </ul>
                     </div>
                     <br>
-                    <template v-if="item.obs_items">
-                    <h5 class="registration-results__opinion-title bold"><?= i::__('Detalhamento') ?>:</h5>
-                    <ul>
-                        <li>
-                            {{item.obs_items}}
-                        </li>
-                    </ul>
-                    </template>
+                    <div v-if="item.obs_items">
+                        <h5 class="registration-results__opinion-title bold"><?= i::__('Detalhamento') ?>:</h5>
+                        <ul>
+                            <li>
+                                {{item.obs_items}}
+                            </li>
+                        </ul>
+                    </div>
                 </div>
             </div>
         </div>

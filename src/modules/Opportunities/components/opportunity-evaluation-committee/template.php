@@ -1,4 +1,5 @@
 <?php
+
 /**
  * @var MapasCulturais\App $app
  * @var MapasCulturais\Themes\BaseV2\Theme $this
@@ -11,14 +12,17 @@ $this->import('
     mc-avatar
     mc-confirm-button
     mc-icon
+    mc-loading
+    mc-modal
     mc-multiselect
     mc-tag-list
     select-entity
-    opportunity-registration-filter-configuration
+    registration-distribution-rule
 ');
 ?>
 <div class="opportunity-evaluation-committee">
     <div class="opportunity-evaluation-committee__header">
+        <?php $this->applyComponentHook('select-entity', 'begin'); ?>
         <select-entity v-if="!showDisabled" type="agent" :select="queryString" :query="query" @select="selectAgent($event)" openside="down-right" permissions="">
             <template #button="{ toggle }">
                 <button class="button button--icon button--primary button--md" @click="toggle()">
@@ -26,7 +30,15 @@ $this->import('
                     <?php i::_e('Adicionar pessoa avaliadora') ?>
                 </button>
             </template>
+
+            <template #entityInfo="{entity}">
+                <span class="icon">
+                    <mc-avatar :entity="entity" size="xsmall"></mc-avatar>
+                </span>
+                <span class="label"> #{{entity.id}} - {{entity.name}}<template v-if="entity.user?.email"> - {{entity.user.email}}</template></span>
+            </template>
         </select-entity>
+        <?php $this->applyComponentHook('select-entity', 'end'); ?>
 
         <div v-if="showReviewers" class="opportunity-evaluation-committee__expand-button">
             <button class="button button--icon button--primary" @click="expandAllToggles()">
@@ -52,96 +64,220 @@ $this->import('
                 <div class="opportunity-evaluation-committee__card-toggle" @click.stop="toggleContent(infoReviewer.id)">
                     <mc-icon :name="infoReviewer.isContentVisible ? 'up' : 'down'"></mc-icon>
                 </div>
-                
+
                 <div class="opportunity-evaluation-committee__card-header-content">
-                    <div class="opportunity-evaluation-committee__card-entity">
+                    <div class="opportunity-evaluation-committee__card-header-content-info">
+                        <small>
+                            <strong><?= i::__('Nº Avaliador')?>:</strong> #{{infoReviewer.metadata.committeeSequentialNumber || '-'}} | 
+                            <strong><?= i::__('E-mail')?>:</strong> {{infoReviewer.agent.user.email}} | 
+                            <strong><?= i::__('ID Agente')?>:</strong> #{{infoReviewer.agent.id}} | 
+                            <strong><?= i::__('ID Usuário')?>:</strong> #{{infoReviewer.agent.user.id}}
+                        </small>
+                    </div>
+                    <div class="opportunity-evaluation-committee__card-header-content-data">
+                        <div class="opportunity-evaluation-committee__card-entity">
                         <div class="opportunity-evaluation-committee__card-header-info">
-                            <mc-avatar v-if="infoReviewer.status !== -5 && hasEvaluationConfiguration(infoReviewer?.agentUserId)" :entity="infoReviewer.agent" size="xsmall"></mc-avatar>
-                            <mc-avatar v-if="infoReviewer.status == -5 || !hasEvaluationConfiguration(infoReviewer?.agentUserId)" :entity="infoReviewer.agent" type="warning" size="xsmall" square></mc-avatar>
+                            <mc-avatar v-if="infoReviewer.status !== -5 && hasEvaluationConfiguration(infoReviewer)" :entity="infoReviewer.agent" size="xsmall"></mc-avatar>
+                            <mc-avatar v-if="infoReviewer.status == -5 || !hasEvaluationConfiguration(infoReviewer)" :entity="infoReviewer.agent" type="warning" size="xsmall" square></mc-avatar>
                             <div class="opportunity-evaluation-committee__card-header-info-name">
                                 <span class="bold">{{infoReviewer.agent.name}}</span>
-                                <small class="semibold">ID: #{{infoReviewer.agent.id}}</small>
                             </div>
                         </div>
-                    </div>
-                    <div class="opportunity-evaluation-committee__card-status">
-                        <div v-if="hasEvaluationConfiguration(infoReviewer?.agentUserId) && infoReviewer.status != -5" class="opportunity-evaluation-committee__card-status-wrapper field">
-                            <label class="status-label"><?= i::_e('Status das avaliações:') ?></label>
-                            <div class="opportunity-evaluation-committee__summary">
-                                <span class="opportunity-evaluation-committee__summary--pending semibold">
-                                    <mc-icon name="clock"></mc-icon> <?= i::_e('Pendentes') ?>: {{infoReviewer.metadata.summary.pending}}
-                                </span>
-                                <span class="opportunity-evaluation-committee__summary--started semibold">
-                                    <mc-icon name="clock"></mc-icon> <?= i::_e('Iniciadas') ?>: {{infoReviewer.metadata.summary.started}}
-                                </span>
-                                <span class="opportunity-evaluation-committee__summary--completed semibold">
-                                    <mc-icon name="check"></mc-icon> <?= i::_e('Concluídas') ?>: {{infoReviewer.metadata.summary.completed}}
-                                </span>
-                                <span class="opportunity-evaluation-committee__summary--sent semibold">
-                                    <mc-icon name="send"></mc-icon> <?= i::_e('Enviadas') ?>: {{infoReviewer.metadata.summary.sent}}
-                                </span>
-                            </div>
                         </div>
-
-                        <mc-alert v-else type="warning" small>
-                            <p v-if="!hasEvaluationConfiguration(infoReviewer?.agentUserId)"> <strong>{{infoReviewer.agent.name}}</strong> <?= i::__('ainda não tem avaliações disponíveis') ?> </p>
-                            <p v-if="infoReviewer.status == -5"> <strong>{{infoReviewer.agent.name}}</strong> <?= i::__('ainda não aceitou o convite para avaliar esta oportunidade') ?> </p>
-                        </mc-alert>
-
-                        <mc-confirm-button v-if="infoReviewer.status == -5" @confirm="delReviewer(infoReviewer)" no="<?= i::esc_attr__('Não') ?>" yes="<?= i::esc_attr__('Sim') ?>">
-                            <template #button="{open}">
-                                <button class="opportunity-evaluation-committee__cancel-invitation button button--text-danger button--icon button--sm col-3" @click="open()">
-                                    <mc-icon name="trash"></mc-icon> <?= i::__('Cancelar convite') ?>
-                                </button>
-                            </template> 
-                            <template #message="message">
-                                <p> <?= i::__('Você tem certeza que cancelar o convite para <strong>{{infoReviewer.agent.name}}</strong> avaliar esta oportunidade?') ?> </p>
-                            </template> 
-                        </mc-confirm-button>
-
-                        <!-- <div class="opportunity-evaluation-committee__card-footer-alert">
-                            <div v-if="infoReviewer.status == -5">
-                                <mc-confirm-button @confirm="delReviewer(infoReviewer.agent)" no="<?= i::esc_attr__('Não') ?>" yes="<?= i::esc_attr__('Sim') ?>">
-                                    <template #button="{open}">
-                                        <button class="button button--text-danger button--icon button--sm col-3" @click="open()">
-                                            <mc-icon name="trash"></mc-icon> <?= i::__('Cancelar convite') ?>
-                                        </button>
-                                    </template> 
-                                    <template #message="message">
-                                        <p> <?= i::__('Você tem certeza que cancelar o convite para <strong>{{infoReviewer.agent.name}}</strong> avaliar esta oportunidade?') ?> </p>
-                                    </template> 
-                                </mc-confirm-button>
+                        <div class="opportunity-evaluation-committee__card-status">
+                            <div v-if="hasEvaluationConfiguration(infoReviewer) && infoReviewer.status != -5" class="opportunity-evaluation-committee__card-status-wrapper field">
+                                <label class="status-label">{{ infoReviewer.metadata.summary.pending + infoReviewer.metadata.summary.started + infoReviewer.metadata.summary.completed + infoReviewer.metadata.summary.sent }} <?= i::__('inscrições para avaliar, estando:') ?></label>
+                                
+                                <div class="opportunity-evaluation-committee__summary">
+                                    <span class="opportunity-evaluation-committee__summary--pending semibold">
+                                        <mc-icon name="clock"></mc-icon> <?= i::_e('Pendentes') ?>: {{infoReviewer.metadata.summary.pending}}
+                                    </span>
+                                    <span class="opportunity-evaluation-committee__summary--started semibold">
+                                        <mc-icon name="clock"></mc-icon> <?= i::_e('Iniciadas') ?>: {{infoReviewer.metadata.summary.started}}
+                                    </span>
+                                    <span class="opportunity-evaluation-committee__summary--completed semibold">
+                                        <mc-icon name="check"></mc-icon> <?= i::_e('Concluídas') ?>: {{infoReviewer.metadata.summary.completed}}
+                                    </span>
+                                    <span class="opportunity-evaluation-committee__summary--sent semibold">
+                                        <mc-icon name="send"></mc-icon> <?= i::_e('Enviadas') ?>: {{infoReviewer.metadata.summary.sent}}
+                                    </span>
+                                </div>
                             </div>
-                        </div> -->
+
+                            <mc-alert v-else type="warning" small>
+                                <template v-if="!hasEvaluationConfiguration(infoReviewer)">
+                                    <strong>{{infoReviewer.agent.name}}</strong> <?= i::__('ainda não tem avaliações disponíveis') ?>
+                                </template>
+                                <template v-if="infoReviewer.status == -5">
+                                    <strong>{{infoReviewer.agent.name}}</strong> <?= i::__('ainda não aceitou o convite para avaliar esta oportunidade') ?>
+                                </template>
+                            </mc-alert>
+
+                            <div v-if="infoReviewer.ownRegistrationsWarning" class="opportunity-evaluation-committee__own-registration">
+                                <mc-icon name="info"></mc-icon>
+                                <span>
+                                    <?= i::__('Também é proponente neste edital e, por isso, não avaliará a própria inscrição. As quantidades para ele podem ser diferentes do esperado.') ?>
+                                </span>
+                            </div>
+
+                            <mc-confirm-button v-if="infoReviewer.status == -5" @confirm="delReviewer(infoReviewer)" no="<?= i::esc_attr__('Não') ?>" yes="<?= i::esc_attr__('Sim') ?>">
+                                <template #button="{open}">
+                                    <button class="opportunity-evaluation-committee__cancel-invitation button button--text-danger button--icon button--sm col-3" @click="open()">
+                                        <mc-icon name="trash"></mc-icon> <?= i::__('Cancelar convite') ?>
+                                    </button>
+                                </template>
+                                <template #message="message">
+                                    <p> <?= i::__('Você tem certeza que cancelar o convite para <strong>{{infoReviewer.agent.name}}</strong> avaliar esta oportunidade?') ?> </p>
+                                </template>
+                            </mc-confirm-button>
+                        </div>
                     </div>
                 </div>
 
             </div>
 
             <div class="opportunity-evaluation-committee__card-content" v-if="infoReviewer.isContentVisible">
-                <opportunity-registration-filter-configuration
-                    :entity="entity"
-                    v-model:default-value="fetchConfigs[infoReviewer.agent.id]"
-                    :excludeFields="excludeFields"
-                    @updateExcludeFields="$emit('updateExcludeFields', $event)"
-                    :info-reviewer="infoReviewer"
+                <registration-distribution-rule
+                    :opportunity="entity.opportunity"
+                    v-model="evaluatorDistributionRules[infoReviewer.agentUserId]"
+                    :parent-filters="commissionDistributionRule"
+                    :disable-filters="evaluatorDisabledFilters"
+                    enable-filter-by-number
+                    enable-filter-by-sent-timestamp
                     class="opportunity-evaluation-committee__card-filter"
-                    useDistributionField
+                    @update:modelValue="onEvaluatorDistributionRuleChange($event, infoReviewer)"
+                    @update:parentFilters="onParentFiltersUpdate($event)"
                 />
 
-                <div class="opportunity-evaluation-committee__card-footer"> 
-                    <mc-confirm-button v-if="infoReviewer.metadata?.summary.sent > 0" @confirm="reopenEvaluations(infoReviewer.agentUserId)">
-                        <template #button="{open}">
-                            <button class="button button--primary" :class="{'disabled' : infoReviewer.metadata.summary.sent <= 0}" @click="open()">
-                                <?php i::_e('Reabrir avaliações') ?>
-                            </button>
-                        </template>
-                        <template #message="message">
-                            <?php i::_e('Você tem certeza que deseja reabrir as avaliações para este avaliador?') ?>
-                        </template> 
-                    </mc-confirm-button>
+                <div class="opportunity-evaluation-committee__registration-list">
+                    <mc-toggle
+                        v-model="showRegistrationListFlag[infoReviewer.id]"
+                        label="<?= i::esc_attr__('Informar lista de inscrições que este avaliador deve avaliar') ?>"
+                        @update:modelValue="changeShowRegistrationListFlag($event, infoReviewer)"
+                    />
+                    <template v-if="showRegistrationList(infoReviewer)">
+                        <label>
+                            <?= i::__('Lista de inscrições') ?>
+                            <div class='field opportunity-evaluation-committee__registration-list-textarea'>
+                                <textarea 
+                                    v-model="infoReviewer.registrationListText" 
+                                    @change="saveRegistrationList(infoReviewer)" 
+                                    placeholder="<?=  i::esc_attr__('Preencha com os números de inscrição que o avaliador deve avaliar, separados por vírgula.') ?>"
+                                    rows="4"></textarea>
+                            </div>
+                        </label>
+                        <label class="opportunity-evaluation-committee__registration-list__exclusive">
+                            <input 
+                                type="checkbox" 
+                                v-model="infoReviewer.metadata.registrationListExclusive" 
+                                @change="saveRegistrationListExclusive(infoReviewer)">
+                            <?= i::__('não distribuir outras inscrições desta comissão para este avaliador') ?>
+                        </label>
+                    </template>
+                </div>
 
+                <div class="opportunity-evaluation-committee__card-footer">
                     <div class="opportunity-evaluation-committee__card-footer-actions" v-if="infoReviewer.status !== -5">
+                        <select-entity v-if="!showDisabled" type="agent" :select="queryString" :query="query" @select="replaceReviewer($event, infoReviewer)" openside="down-right" permissions="">
+                            <template #button="{ toggle }">
+                                <button class="opportunity-evaluation-committee__card-footer-button button button--disable button--icon button--sm" @click="toggle()">
+                                    <mc-icon name="exchange"></mc-icon>
+                                    <?php i::_e('Substituir avaliador') ?>
+                                </button>
+                            </template>
+
+                            <template #entityInfo="{entity}">
+                                <span class="icon">
+                                    <mc-avatar :entity="entity" size="xsmall"></mc-avatar>
+                                </span>
+                                <span class="label"> #{{entity.id}} - {{entity.name}}<template v-if="entity.user?.email"> - {{entity.user.email}}</template></span>
+                            </template>
+                        </select-entity>
+                        <mc-modal
+                            v-if="infoReviewer.metadata?.summary.sent > 0"
+                            title="<?= i::esc_attr__('Reabrir avaliações') ?>"
+                            classes="opportunity-evaluation-committee__reopen-modal"
+                            teleport="body"
+                            @open="openReopenModal(infoReviewer)"
+                            @close="resetReopenModal()">
+                            <template #button="{open}">
+                                <button class="opportunity-evaluation-committee__card-footer-button danger__border button button--icon button--sm" @click="open()">
+                                    <mc-icon name="lock-open" class="danger__color" ></mc-icon>
+                                    <?php i::_e('Reabrir avaliações') ?>
+                                </button>
+                            </template>
+
+                            <template #default>
+                                <div class="opportunity-evaluation-committee__reopen-content">
+                                    <p><?= i::__('Selecione as avaliações enviadas de') ?> <strong>{{infoReviewer.agent.name}}</strong> <?= i::__('que deseja reabrir.') ?></p>
+                                    <mc-alert v-if="entity.evaluationTo?.isPast()" type="warning" small>
+                                        <?= i::__('O período de avaliação terminou. Reabrir avaliações não libera a edição pelo avaliador.') ?>
+                                    </mc-alert>
+
+                                    <mc-loading :condition="loadingSentEvaluations && sentPage === 0"><?= i::__('Carregando avaliações') ?></mc-loading>
+                                    <mc-alert v-if="reopenListError" type="danger" small>
+                                        <?= i::__('Não foi possível carregar as avaliações enviadas.') ?>
+                                    </mc-alert>
+                                    <p v-if="!loadingSentEvaluations && !reopenListError && sentTotal === 0">
+                                        <?= i::__('Não há avaliações enviadas para este avaliador.') ?>
+                                    </p>
+
+                                    <template v-if="sentEvaluations.length > 0">
+                                        <p class="semibold"><?= i::__('Avaliações enviadas') ?>: {{sentTotal}}</p>
+                                        <div class="opportunity-evaluation-committee__reopen-list scrollbar">
+                                            <label v-for="evaluation in sentEvaluations" :key="evaluation.id" class="opportunity-evaluation-committee__reopen-item">
+                                                <input type="checkbox" v-model="selectedEvaluationIds" :value="evaluation.id" :disabled="reopening">
+                                                <span><?= i::__('Inscrição') ?> {{evaluation.registrationNumber}}</span>
+                                            </label>
+                                        </div>
+                                        <button v-if="sentHasMore" class="button button--text" :disabled="loadingSentEvaluations" @click="loadMoreSentEvaluations()">
+                                            <?= i::__('Carregar mais avaliações') ?>
+                                        </button>
+                                        <mc-loading :condition="loadingSentEvaluations && sentPage > 0"><?= i::__('Carregando avaliações') ?></mc-loading>
+                                    </template>
+                                    <button v-if="reopenListError" class="button button--text" @click="loadMoreSentEvaluations()">
+                                        <?= i::__('Tentar novamente') ?>
+                                    </button>
+                                </div>
+                            </template>
+
+                            <template #actions="modal">
+                                <button class="button button--text" @click="modal.close()"><?= i::__('Cancelar') ?></button>
+                                <mc-confirm-button @confirm="reopenSelectedEvaluations(modal)" yes="<?= i::esc_attr__('Reabrir') ?>" no="<?= i::esc_attr__('Cancelar') ?>">
+                                    <template #button="{open}">
+                                        <button class="button button--primary-outline" :disabled="!selectedEvaluationIds.length || loadingSentEvaluations || reopenListError || reopening" @click="open()">
+                                            <template v-if="selectedEvaluationIds.length === 1"><?= i::__('Reabrir selecionada') ?></template>
+                                            <template v-else><?= i::__('Reabrir selecionadas') ?></template> ({{selectedEvaluationIds.length}})
+                                        </button>
+                                    </template>
+                                    <template #message>
+                                        <p class="opportunity-evaluation-committee__reopen-confirmation">
+                                            <span><?= i::__('Reabrir') ?></span>
+                                            <strong>{{selectedEvaluationIds.length}}</strong>
+                                            <span v-if="selectedEvaluationIds.length === 1"><?= i::__('avaliação selecionada de') ?></span>
+                                            <span v-else><?= i::__('avaliações selecionadas de') ?></span>
+                                            <span><strong>{{infoReviewer.agent.name}}</strong>?</span>
+                                        </p>
+                                    </template>
+                                </mc-confirm-button>
+                                <mc-confirm-button @confirm="reopenAllEvaluations(modal)" yes="<?= i::esc_attr__('Reabrir todas') ?>" no="<?= i::esc_attr__('Cancelar') ?>">
+                                    <template #button="{open}">
+                                        <button class="button button--secondary" :disabled="sentTotal === 0 || loadingSentEvaluations || reopenListError || reopening" @click="open()">
+                                            <?= i::__('Reabrir todas') ?> ({{sentTotal}})
+                                        </button>
+                                    </template>
+                                    <template #message>
+                                        <p class="opportunity-evaluation-committee__reopen-confirmation">
+                                            <span><?= i::__('Reabrir todas as') ?></span>
+                                            <strong>{{sentTotal}}</strong>
+                                            <span><?= i::__('avaliações enviadas de') ?></span>
+                                            <span><strong>{{infoReviewer.agent.name}}</strong>?</span>
+                                        </p>
+                                    </template>
+                                </mc-confirm-button>
+                            </template>
+                        </mc-modal>
+
                         <button class="opportunity-evaluation-committee__card-footer-button button button--disable button--icon button--sm" @click="disableOrEnableReviewer(infoReviewer)">
                             <mc-icon name="close"></mc-icon> {{buttonText(infoReviewer.status)}}
                         </button>
@@ -151,7 +287,7 @@ $this->import('
                                 <button class="opportunity-evaluation-committee__card-footer-button button button--delete button--icon button--sm" @click="open()">
                                     <mc-icon name="trash"></mc-icon> <?= i::__('Excluir') ?>
                                 </button>
-                            </template> 
+                            </template>
                             <template #message="message">
                                 <p>
                                     <?= i::__('Você tem certeza que deseja excluir <strong>{{infoReviewer.agent.name}}</strong> da função de avaliador(a)?') ?>
@@ -162,12 +298,22 @@ $this->import('
                                         <strong><?= i::__('ATENÇÃO') ?>: </strong> <?= i::__('TODAS as avaliações realizadas por <strong>{{infoReviewer.agent.name}}</strong> serão <strong>excluídas permanentemente</strong>.') ?>
                                     </mc-alert>
                                 </p>
-                            </template> 
+                            </template>
                         </mc-confirm-button>
                     </div>
+
+                    <label>
+                        <?= i::__('Limite de inscrições:') ?>
+                        <div class='field opportunity-evaluation-committee__max-registrations'>
+                            <input 
+                                v-model="infoReviewer.metadata.maxRegistrations" 
+                                @change="saveMaxRegistrations(infoReviewer)" 
+                                type="number">
+                        </div>
+                    </label>
                 </div>
             </div>
-        </div>   
+        </div>
     </div>
 
     <div class="opportunity-evaluation-committee__footer" v-if="infosReviewers.length > 0 && !showDisabled">
@@ -177,6 +323,13 @@ $this->import('
                     <mc-icon name="add"></mc-icon>
                     <?php i::_e('Adicionar pessoa avaliadora') ?>
                 </button>
+            </template>
+
+            <template #entityInfo="{entity}">
+                <span class="icon">
+                    <mc-avatar :entity="entity" size="xsmall"></mc-avatar>
+                </span>
+                <span class="label"> #{{entity.id}} - {{entity.name}}<template v-if="entity.user?.email"> - {{entity.user.email}}</template></span>
             </template>
         </select-entity>
     </div>

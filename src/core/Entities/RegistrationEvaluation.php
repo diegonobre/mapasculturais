@@ -40,6 +40,7 @@ use RuntimeException;
  * @ORM\HasLifecycleCallbacks
  */
 class RegistrationEvaluation extends \MapasCulturais\Entity {
+    use Traits\EntityFiles;
     use Traits\EntityRevision;
 
     const STATUS_EVALUATED = self::STATUS_ENABLED;
@@ -125,9 +126,17 @@ class RegistrationEvaluation extends \MapasCulturais\Entity {
     protected $isTiebreaker = false;
 
     /**
+     * @var \MapasCulturais\Entities\RegistrationEvaluationFile[] Files
+     *
+     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\RegistrationEvaluationFile", mappedBy="owner", cascade={"remove"})
+     * @ORM\JoinColumn(name="id", referencedColumnName="object_id", onDelete="CASCADE")
+    */
+    protected $__files;
+
+    /**
      * Nome da comissão avaliadora pela qual o avaliador avaliou essa avaliação
      * 
-     * @var integer
+     * @var string
      *
      * @ORM\Column(name="committee", type="string", nullable=true)
      */
@@ -231,6 +240,16 @@ class RegistrationEvaluation extends \MapasCulturais\Entity {
     }
 
     protected function genericPermissionVerification($user) {
+        // Nunca criar avaliação do proponente da inscrição (autoavaliação)
+        if($this->registration->owner->user->equals($this->user)){
+            return false;
+        }
+
+        // Criação exige estar atribuído em valuers (mesma regra do evaluate)
+        if(!$this->registration->canUser('evaluate', $this->user)){
+            return false;
+        }
+
         return $this->registration->opportunity->evaluationMethodConfiguration->canUser('@control', $user) && $this->user->profile->canUser('@control', $user);
     }
     
@@ -239,8 +258,9 @@ class RegistrationEvaluation extends \MapasCulturais\Entity {
             return false;
         }
 
-        if ($this->registration->opportunity->canUser('@control')) {
-            return true;
+        // Nunca permitir editar autoavaliação
+        if($this->registration->owner->user->equals($this->user)){
+            return false;
         }
 
         if($this->registration->opportunity->canUser('@control', $user)){
@@ -278,7 +298,7 @@ class RegistrationEvaluation extends \MapasCulturais\Entity {
 
     protected function canUserRemove($user)
     {
-        if ($this->registration->opportunity->canUser('remove', $user)) {
+        if ($this->registration->opportunity->canUser('remove', $user) || $this->registration->opportunity->canUser('@control', $user)) {
             return true;
         } else {
             return parent::canUserRemove($user);
@@ -293,6 +313,7 @@ class RegistrationEvaluation extends \MapasCulturais\Entity {
         $result['agent'] = $this->user->profile->simplify('id,name,singleUrl');
         $result['registration'] = $this->registration->simplify('id,number,singleUrl');
         $result['singleUrl'] = $this->getSingleUrl();
+        $result['files'] = $this->files;
 
         return $result;
     }

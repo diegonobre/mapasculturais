@@ -1,4 +1,9 @@
 <?php
+
+use MapasCulturais\App;
+use MapasCulturais\i;
+
+$app = App::i();
 $entity = $this->controller->requestedEntity;
 
 $result = [];
@@ -31,5 +36,27 @@ foreach ($fields_list as $field) {
 usort($result, function ($a, $b) {
     return $a['order'] <=> $b['order'];
 });
+
+// Pergunta de cotas do sistema (fica fora do formulário, no topo da inscrição)
+if ($entity->enableQuotasQuestion) {
+    array_unshift($result, [
+        "id" => "appliedForQuota",
+        "title" => i::__('Vai concorrer às cotas?'),
+        "ref" => "appliedForQuota",
+        "type" => "select",
+        "categories" => [],
+        "proponentTypes" => [],
+        "registrationRanges" => [],
+        "config" => null,
+        "order" => -1,
+        "conditional" => false,
+        "conditionalField" => null,
+        "required" => true,
+        "displayOrder" => -1,
+        "step" => ["displayOrder" => -1],
+    ]);
+}
+
+$app->applyHook('component(opportunity-support-config).fields', [&$result, $entity]);
 
 $this->jsObject['config']['opportunitySupportConfig'] = $result;

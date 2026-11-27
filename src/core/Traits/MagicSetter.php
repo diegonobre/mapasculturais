@@ -21,7 +21,7 @@ trait MagicSetter{
     public function __set($name, $value){
         if($this instanceof Entity && $this->usesSealRelation()) {
             $app = App::i();
-            if(in_array($name, $this->lockedFields) && $value != $this->$name) {
+            if(!$app->user->is('admin') && $this->isFieldLocked($name) && $value != $this->$name && $app->isAccessControlEnabled()) {
                 throw new \MapasCulturais\Exceptions\PermissionDenied($app->user, $this, "modify locked field: $name");
             }
         }

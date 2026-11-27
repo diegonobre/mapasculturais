@@ -3,11 +3,16 @@
 namespace Support;
 
 use MapasCulturais\App;
+use MapasCulturais\Entities\Registration;
+use MapasCulturais\Exceptions\PermissionDenied;
+use MapasCulturais\i;
+use MapasCulturais\Themes\BaseV2\Theme;
 
 class Module extends \MapasCulturais\Module
 {
     public const SUPPORT_GROUP = "@support";
     protected $inTransaction = false;
+    protected $supportHasControl = false;
     protected $grantedCoarse = false;
 
     public function __construct(array $config = [])
@@ -54,6 +59,9 @@ class Module extends \MapasCulturais\Module
         // permissões granulares com uso de transactions
         $app->hook("PATCH(registration.single):before", function () use ($app, $self) {
             if ($self->isSupportUser($this->requestedEntity->opportunity, $app->user) ){
+                // Calculado antes da transação: dentro dela o hook abaixo libera @control
+                // de qualquer agente, o que daria controle da inscrição a todo suporte
+                $self->supportHasControl = $this->requestedEntity->canUser("@control");
                 $self->inTransaction = true;
                 $app->em->beginTransaction();
             }
@@ -66,8 +74,14 @@ class Module extends \MapasCulturais\Module
             }
         });
 
-        $app->hook("entity(RegistrationMeta).update:before", function () use ($app, $self) {
-            if ($this->owner->canUser("@control")) {
+        // save:before (antes do flush), no mesmo padrão do RegistrationFieldTypes:
+        // PermissionDenied vira 403 limpo. Exception genérica no update:before o Slim
+        // logava como Application Error e quebrava o PHPUnit com process-isolation.
+        $app->hook("entity(RegistrationMeta).save:before", function () use ($app, $self) {
+            if (!$self->inTransaction) {
+                return;
+            }
+            if ($self->supportHasControl) {
                 return;
             }
             foreach ($this->owner->opportunity->agentRelations as $relation) {
@@ -79,15 +93,16 @@ class Module extends \MapasCulturais\Module
                     return;
                 }
             }
-            if ($self->inTransaction) {
-                $app->em->rollback();
-                throw new \Exception("Permission denied.");
-            }
-            return;
+            $app->em->rollback();
+            $self->inTransaction = false;
+            $self->supportHasControl = false;
+            throw new PermissionDenied(message: i::__('Você está tentando modificar um campo que você não tem permissão'));
         });
         $app->hook("slim.after", function () use ($app, $self) {
             if ($self->inTransaction) {
                 $app->em->commit();
+                $self->inTransaction = false;
+                $self->supportHasControl = false;
             }
             return;
         });
@@ -152,9 +167,23 @@ class Module extends \MapasCulturais\Module
             }
             return;
         });
+
+        $app->hook("can(Registration.view)", function ($user, &$result) use ($self) {
+            if($result) {
+                return;
+            }
+
+            $opportunity = $this->opprtunity;
+            if($opportunity && $next_phase = $opportunity->nextPhase) {
+                if($self->isSupportUser($next_phase, $user)){
+                    $result = true;
+                }
+            }
+        });
+
         $app->hook("can(Registration<<File|Meta>>.<<create|remove>>)", function ($user, &$result) use ($self) {
-            
-            if (!$this->owner->canUser("@control")) {
+            $has_control = $self->inTransaction ? $self->supportHasControl : $this->owner->canUser("@control");
+            if (!$has_control) {
                 if ($self->grantedCoarse) {
                     $result = false;
                 }
@@ -172,10 +201,19 @@ class Module extends \MapasCulturais\Module
         
             return;
         });
+        
         $app->hook("entity(Registration).permissionCacheUsers", function (&$users) {
+            $agents = [];
+            $opportunity = $this->opportunity;
+
+            while($opportunity) {
+                $agents = array_merge($agents, $opportunity->relatedAgents[self::SUPPORT_GROUP] ?? []);
+                $opportunity = $opportunity->nextPhase;
+            }
+
             $support_users = array_map(function ($agent) {
                 return $agent->user;
-            }, ($this->opportunity->relatedAgents[self::SUPPORT_GROUP] ?? []));
+            }, $agents);
             $users = array_values(array_unique(array_merge($users, $support_users)));
             return;
         });
@@ -184,7 +222,7 @@ class Module extends \MapasCulturais\Module
         $app->hook('GET(registration.view):before', function() use($app) {
             $registration = $this->requestedEntity;
             if ($registration->canUser('support', $app->user)){
-                if(!$registration->isUserAdmin($app->user) && !$registration->canUser('evaluate') && !$registration->opportunity->canUser('@control')){
+                if(!$app->user->is('admin') && !$registration->canUser('evaluate') && !$registration->opportunity->canUser('@control')){
                     $app->redirect($app->createUrl('support','registration', [$registration->id]) ) ;
                 }
             }
@@ -202,6 +240,38 @@ class Module extends \MapasCulturais\Module
                 }
             }
             return false;
+        });
+
+        $app->hook('GET(support.form):before', function () use($app) {
+            $app->hook('view.requestedEntity(Registration).result', function (&$result) use($app) {
+                /** @var Theme $this */
+
+                /** @var Registration */
+                $registration = $this->controller->requestedEntity;
+                $opportunity = $registration->opportunity;
+
+                $permissions = [];
+
+                foreach ($opportunity->agentRelations as $rel){
+                    if ($rel->group == self::SUPPORT_GROUP && $rel->agent->user->equals($app->user)) {
+                        $permissions = $rel->metadata["registrationPermissions"];
+                        break;
+                    }
+                }
+
+                $fields = array_merge(
+                    $opportunity->registrationFieldConfigurations,
+                    $opportunity->registrationFileConfigurations
+                );
+
+                foreach ($fields as $field) {
+                    $key = $field->fileGroupName ?? $field->fieldName;
+                    
+                    if(($permissions[$key] ?? 'ro') == 'ro') {
+                        $result['__lockedFields'][] = $key;
+                    }
+                }                
+            });
         });
     }
 
@@ -225,6 +295,10 @@ class Module extends \MapasCulturais\Module
         $app->view->enqueueStyle('app', 'support', 'css/support.css');
         $app->view->enqueueScript('app', 'support', 'js/ng.support.js', ['entity.module.opportunity']);
         $app->view->jsObject['angularAppDependencies'][] = 'ng.support';
+
+        $app->view->localizeScript('support', [
+            'confirmRemoveAgentRelation' => \MapasCulturais\i::__('Voce realmente deseja remover a relação deste agente?'),
+        ]);
     }
 
     public function isSupportUser($opportunity, $user)

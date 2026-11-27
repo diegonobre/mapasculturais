@@ -5,29 +5,1523 @@ Todas as mudanças notáveis no projeto serão documentadas neste arquivo.
 O formato é baseado no [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/)
 e este projeto adere ao [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [7.6]
+## [Unreleased]
 ### Novas Funcionalidades
-- Editais de fluxo contínuo, podendo ter ou não uma data de término.
-- Configuração de selos certificadores para editais, sendo possível configurar quais selos serão aplicados para cada tipo de proponente em cada fase do edital.
-- Opção de autoaplicação dos resultados das avaliações quando todos os avaliadores de uma inscrição tiverem avaliado
-- Comissões de avaliação
-  - Possibilidade de criação de mútiplas comissões de avaliação
-  - Possibilidade de configurar para cada comissão os critérios de distribuição das inscrições 
-  - Possibilidade de limitar o número de avaliadores de uma comissão qua cada inscrição receberá
-  - Comissão de voto de minerva, que recebe inscrições que tenham divergência entre diferentes comissões de avaliação
-- Etapas em formulários de inscrição
+- Substitui o iframe legado (AngularJS) da aba Relatórios da gestão de oportunidade por componentes Vue nativos, incluindo os gráficos estáticos e o construtor de gráficos personalizados (criar, editar, pré-visualizar e excluir)
+- Adiciona filtro por tipo de proponente e por faixa/linha aos relatórios da oportunidade, disponíveis como campos selecionáveis no construtor de gráficos e na exportação em CSV
+- Na comissão de avaliação, o gestor pode selecionar no modal uma ou mais avaliações enviadas para reabrir, ou reabrir todas as enviadas de uma pessoa avaliadora. Na seleção, apenas as escolhidas passam para concluídas.
+- Adiciona configuração na oportunidade para ocultar todas as datas das fases na página pública, na linha do tempo de acompanhamento da inscrição e nos avisos de prazo da ficha, mantendo as datas operacionais ativas para validações e gestão interna.
+- **Avaliação automática por selos**: o gestor pode indicar, em uma fase de avaliação, quais selos validam o proponente. Se a pessoa já tiver esses selos válidos no perfil, a inscrição é **dispensada automaticamente** daquela fase (marcada como “Dispensada por selos”) e segue para a próxima etapa, sem precisar de avaliador
+- **Novos anexos no cadastro do agente** (também usáveis como campos `@` no formulário de inscrição): CPF, CNPJ, CNH, RG, passaporte, comprovante de residência, vínculo territorial, currículo, portfólio, certidões fiscal, trabalhista e de prestação de contas, além de comprovantes de raça/cor, pessoa com deficiência e comunidades tradicionais. Os arquivos ficam no perfil e acompanham a inscrição automaticamente
+- **Documentação navegável da API pública** em `/api/documentation`: página com os endpoints de leitura das entidades (Agentes, Eventos, Espaços, Projetos, Oportunidades), filtros, formatos e schemas de resposta, com opção de testar cada consulta no próprio navegador
+
+### Correções
+- Corrige "Tipo de proponente" e "Faixa/Linha" que não apareciam como opções de campo no construtor de gráficos de relatórios
+- Corrige gráfico personalizado salvo nos relatórios que podia colidir ou ser sobrescrito por outro com os mesmos campos em uma oportunidade diferente
+- Corrige erro ao carregar os gráficos estáticos de relatórios em oportunidades sem avaliação técnica configurada
+- Corrige loop de redimensionamento nos gráficos dos relatórios que fazia a tela tremer continuamente
 
 ### Melhorias
-- Redesenho do formulário de inscrição
+- Ajusta ícones, botões e campos do construtor de gráficos de relatórios para seguir o padrão visual da plataforma
 
 ### Melhorias não funcionais
+- Adiciona testes automatizados para os filtros de tipo de proponente e faixa/linha e para a correção de duplicação de gráficos personalizados nos relatórios
+
+## [7.8.24] - 2026-11-19
+### Melhorias
+- Atualiza o PHP para a versão 8.3.37, com as correções de segurança recomendadas pelo próprio PHP
+
+## [7.8.23] - 2026-11-18
+### Correções
+- Endurece a decodificação de metadados usados em cotas e desempates
+- Passa a serializar jobs de e-mail em formato JSON
+- Força transporte de callback Opauth via sessão
+- Torna estável o desempate na redistribuição de comissões de avaliação
+- Corrige a abertura de pedido na fase de execução, que recusava proponentes cuja inscrição foi feita com outro agente da conta: o pedido passa a poder ser aberto por quem controla o agente responsável pela inscrição, a mesma regra do acompanhamento, e quem não tem vínculo com a inscrição continua sem acesso
+- Corrige a avaliação de recurso em que o avaliador via todos os campos de "Dados informados no formulário" da fase pai, mesmo com a lista de campos visíveis liberando só alguns: o filtro só era aplicado quando a pessoa já tinha `viewUserEvaluation` na inscrição da fase pai, o que não vale para quem avalia apenas o recurso; a ficha da avaliação passa a respeitar essa lista também nesse caso, e os valores não liberados deixam de ser injetados no formulário (gestores com `@control` continuam vendo tudo)
+- Corrige a exibição do aviso "*obrigatório" nos campos do tipo caixa de verificação, tanto na prévia quanto no preenchimento do formulário de inscrição
+- O seletor de datas (`mc-datepicker`) passa a usar o idioma da instalação (`$MAPAS.config.locale`) em vez de ficar sempre em pt-BR, e os nomes dos dias da semana deixam de ser fixos em português
+- Corrige a concessão e a remoção de selos por tipo de proponente e por categoria na publicação/despublicação do resultado e na mudança de status da inscrição: quando a inscrição tinha tipo ou categoria sem chave correspondente em `proponentSeals`/`categorySeals`, o PHP acessava propriedade inexistente e a operação falhava; a aplicação e a remoção dos selos passam a ocorrer só quando a chave existe, e `applySeal`/`removeSeals` ignoram listas nulas ou vazias
+
+## [7.8.22] - 2026-11-11
+### Correções
+- Corrige os campos de tabela/planilha (`custom-table`) na exportação e na tabela da lista de inscrições, que apareciam vazios, como `Array` ou `[object Object]`: os dados passam a mostrar os nomes das colunas e os valores de cada linha, preservando a ordem configurada e valores zero
+- Atualiza o Node.js da imagem Docker para a linha 22 e exige a versão 22.23.4 ou superior nessa linha, incorporando a correção da vulnerabilidade CVE-2026-111497 no decodificador Brotli
+- Preserva as versões das dependências no build Docker com instalação pelo pnpm usando o lockfile congelado
+- Corrige a geração de modelo e de edital a partir de modelo com fase de recurso: o metadado `appealPhase` era copiado com o ID do edital de origem (e o recurso podia ficar com `parent` na 1ª fase em vez da fase de mérito), o que fazia a configuração do formulário e a árvore de fases apontarem para outro edital — inclusive entre subsites no SaaS; o recurso passa a ser clonado com `parent` na fase de mérito correspondente e o vínculo `appealPhase` é religado para essa nova fase, inclusive quando o recurso está na fase de publicação (`isLastPhase`)
+- Corrige a importação de oportunidades para respeitar o filtro `appealPhases`: com a opção desmarcada, fases de recurso presentes no JSON deixam de ser criadas
+- Corrige a duplicação de oportunidades com fase de recurso: além do remap de `parent`/`appealPhase`, o `clone` shallow compartilhava a coleção EAGER `__metadata` com a origem, então o vínculo da cópia não era gravado em `opportunity_meta`; a cópia recarrega as metas após o insert e grava `appealPhase` como linha própria
+- Corrige a duplicação de oportunidades com fase de recurso: a cópia mantinha o metadado `appealPhase` e o `parent` do recurso apontando para o edital de origem, o que fazia a validação de datas do recurso usar a árvore errada; o recurso passa a ser clonado com `parent` na fase de mérito correspondente da cópia e o vínculo `appealPhase` é religado para essa nova fase
+- Corrige a duplicação de oportunidades que terminava em erro 500 ao reescrever os campos visíveis para o avaliador: o remapeamento usava um método `private` de outro trait e não enxergava o mapa de campos da cópia; o remapeamento passa a rodar no próprio duplicador
+- Corrige o modal "Configurar campos editáveis", que travava a data limite assim que havia campos selecionados: o gestor volta a conseguir estender/reabrir o prazo perdido do proponente
+
+### Melhorias
+- Na busca de eventos, ajusta a visualização dos administradores que passam a ver a aba Tabela, com listagem em colunas e exportação de planilha, no mesmo padrão de agentes, espaços, projetos e oportunidades
+- Na gestão de usuários, ajusta a ficha do usuário que passa a ver a aba Avaliações: mostra as fases em que a pessoa avalia (como em Minhas avaliações) e lista as avaliações iniciadas, concluídas e enviadas
+- Na gestão de usuários, os cards da aba Agentes passam a exibir o ID do agente, como na listagem pública
+
+## [7.8.21] - 2026-10-28
+### Correções
+- Corrige o botão "Baixar Anexos (ZIP)" para incluir todos os anexos das fases de coleta de dados da inscrição, organizados por fase e respeitando as permissões de acesso
+- Corrige o alinhamento do menu principal no cabeçalho, que havia sido deslocado para a esquerda na versão 7.8.17, restaurando sua distribuição central entre o logo e os botões de acesso
+- Corrige os campos visíveis para o avaliador, que deixavam o parecerista sem ver a ficha da inscrição inteira enquanto gestores e administradores viam tudo: em editais criados a partir de modelo ou por duplicação, a configuração era copiada com as referências aos campos do edital de origem, que não existem no edital novo, e a tela gravava a marcação como valor booleano, forma que o PHP aceitava e o JavaScript da ficha recusava; as referências passam a ser reescritas para os campos da cópia, em todas as fases, preservando o que estava marcado e o que estava desmarcado, e a marcação passa a ser gravada e lida de forma consistente
+- Corrige a opção "Exibir detalhamento da avaliação anterior para avaliadores do recurso" na configuração da fase de recurso, que não era salva em fases sem a configuração gravada, passando a exibir o valor padrão já utilizado pelo sistema
+
+### Melhorias
+- Ajusta colunas da tabela e planilha de inscritos
+
+## [7.8.20] - 2026-10-20
+### Correções
+- Corrige a exportação da planilha de inscritos para campos do tipo `addresses` (ex.: "Endereço do espaço"), que gerava a coluna vazia mesmo com dados salvos na inscrição
+- Corrige a pergunta "Vai concorrer às cotas?", que já vinha marcada como "Não" e deixava a pessoa enviar a inscrição sem perceber que precisava responder. Agora a pergunta começa sem resposta e, quando habilitada na oportunidade, é obrigatória para enviar a inscrição
+- Corrige a lista de erros ao lado da inscrição, que não mostrava a pergunta "Vai concorrer às cotas?" quando ela estava sem resposta
+- Corrige a edição da inscrição pelo suporte: quem tinha só permissão de visualizar conseguia alterar campos. Agora a alteração é recusada com um aviso claro
+
+### Melhorias
+- Atualiza o PHP para a versão 8.3.36, com as correções de segurança recomendadas pelo próprio PHP
+- Permite liberar a pergunta "Vai concorrer às cotas?" para o suporte e para a edição de campos pelo proponente
+- Deixa a suíte de testes mais rápida e evita que um teste interfira no seguinte
+- Mostra a resposta da pergunta "Vai concorrer às cotas?" na ficha da inscrição
+- Mostra um aviso na configuração do formulário, ao habilitar a pergunta "Vai concorrer às cotas?", explicando que o sistema já inclui essa pergunta e que não é preciso criar outro campo igual
+
+## [7.8.19] - 2026-10-15
+### Correções
+- Corrige a oportunidade criada a partir de modelo, que herdava o subsite do modelo: a oportunidade e todas as suas fases passam a ser criadas no subsite atual, onde o usuário está criando
+- Corrige a oportunidade criada a partir de modelo com resultado publicado, que já nascia com o resultado publicado: a oportunidade e suas fases passam a ser criadas com a publicação do resultado desmarcada
+
+## [7.8.18] - 2026-10-15
+### Correções
+- Corrige a configuração de status da fase, que não era respeitada no formulário do avaliador: status desabilitados (como "Negado" na fase de recurso) continuavam sendo oferecidos e nomes renomeados não apareciam. Os formulários das avaliações simplificada e contínua e o chat da fase de recurso passam a listar apenas os status habilitados na fase, com o nome configurado, e o envio da avaliação com status desabilitado, Rascunho ou Pendente passa a ser recusado
+
+## [7.8.17] - 2026-10-09
+### Correções
+- Corrige o aviso "Não foi possível salvar", que ficava na tela até o clique em fechar, passando a sumir sozinho depois de alguns segundos, como as demais mensagens
+- Corrige erro 500 no relatório de oportunidades com avaliação técnica quando havia inscrições sem nota concluída, passando a considerar apenas notas concluídas no gráfico de faixas de nota e na exportação em CSV
+- Corrige o login de usuários donos de muitos agentes e espaços, que demorava mais de 30 segundos e terminava em erro 500: os avisos de agentes e espaços sem atualização há muito tempo passam a ser gerados em segundo plano, por um job, em vez de durante o login
+- Corrige a geocodificação do endereço internacional (`international-address-form`): as linhas de endereço não disparavam a busca no Nominatim, que só rodava ao trocar estado ou cidade, normalmente antes de digitar a rua; o pin ficava no centro da cidade ou em (0,0). Agora a busca também roda ao digitar o endereço, 1,5 s depois da última tecla
+- Corrige o salvamento da configuração do formulário de fases que não são a oportunidade principal, em especial a fase de recurso: o sistema exigia descrição curta e tipo, campos que só existem no edital, e o salvamento falhava com "A descrição curta é obrigatória" e "O Tipo é obrigatório"; a descrição curta continua obrigatória só na oportunidade principal, e a fase de recurso deixa de exigir tipo
+
+### Melhorias
+- Ajustar o espaçamento dos elementos do header para melhorar a exibição e a organização das informações apresentadas
+
+## [7.8.16] - 2026-10-06
+### Correções
+- Corrige a exibição do plano de metas para aparecer somente quando habilitado e na última etapa visível da inscrição, inclusive com etapas condicionais por categoria, tipo de proponente ou faixa e na tela de suporte
+- Padroniza a ordem das opções ao adicionar e editar campos e anexos do formulário de inscrição: obrigatoriedade e condicionamento passam a aparecer depois das configurações de tipo e antes das categorias, faixas e tipos de proponente
+- Corrige a publicação automática do resultado agendada para o minuto atual: como o campo de horário não tem segundos, o horário já tinha passado no momento do salvamento e a publicação não era agendada; agora, quando a data ou a publicação automática é alterada e o horário passou há até 10 minutos, o resultado é publicado imediatamente
+- Corrige a listagem de oportunidades em que o botão "Editar" não aparecia em alguns editais, mesmo para quem pode editá-los
+- Corrige a ficha de inscrição em que textos longos sem espaço, como links, ultrapassavam a largura da página e cortavam os campos
+
+### Melhorias
+- Na configuração de publicação de resultados, impede salvar data e horário no passado, exibindo um aviso com botão para usar um horário sugerido, e mostra uma orientação com a data e o horário atuais como exemplo para agendar a publicação automática
+- Faz ajustes de visibilidade de metadados de projetos e agentes
+
+## [7.8.15] - 2026-10-02
+### Correções
+- Corrige a edição aberta de campos da inscrição quando o edital tem avaliação técnica com bônus de pontuação: ao salvar um campo do formulário, o sistema recalcula e grava o bônus na mesma operação, a trava tratava esse metadado como alteração do proponente e desfazia o salvamento; a trava passa a valer só para campos do formulário (`field_*`)
+- Corrige o agendamento da publicação automática do resultado na fase de recurso: quando a fase de recurso é criada diretamente no edital publicado, o job de publicação do resultado deixava de ser agendado e o resultado nunca era divulgado automaticamente; o gate de agendamento passa a considerar o status da oportunidade raiz (edital publicado) em vez do pai imediato
+- Corrige a exportação da planilha de inscrições: a coluna "Critérios de desempate" saía com cabeçalho mas vazia em todas as linhas; passa a trazer o mesmo texto da tabela de inscrições ("critério: valor"), um critério por linha, com o valor do critério de data de envio formatado como data legível
+- Corrige o layout das opções do campo "Tipo" na configuração de bônus de pontuação (avaliação técnica), que ficavam em linha única e estouravam a borda do card; as opções passam a quebrar linha dentro do card
+- Mantém o nome automático da fase de recurso sincronizado com a fase de avaliação ou coleta de origem e corrige nomes antigos nas listas de inscrições, preservando nomes personalizados
+- Ao enviar um arquivo maior que o tamanho permitido, o campo de anexo passa a exibir o motivo da recusa, em vez de uma mensagem de erro vermelha e sem texto, e informa que o arquivo excede o limite em vez de dizer que nenhum arquivo foi enviado
+- Corrige erro de chave duplicada que interrompia a criação de oportunidade a partir de modelo: a configuração de avaliação vinculada a uma fase deixava de ficar na fase e era desviada para a oportunidade principal
+- Corrige as cópias geradas a partir de modelo que saíam com fases sem tipo e sem exibir os campos: os metadados de cada fase passam a ser copiados fielmente do modelo, sem perdas e sem valores padrão gravados como dado
+- Corrige a duplicação de oportunidades, que gerava uma fase de avaliação a mais na cópia: a fase clonada herdava a configuração de avaliação da origem; a cópia passa a manter a mesma estrutura de fases da origem, com configurações de avaliação próprias
+- Ajusta o controle de acesso da API na consulta de entidades, alinhando filtros e ordenação às permissões de visualização de dados do usuário
+
+### Melhorias
+- Renomeia a seção "Etapa suplementar" para "Etapa de recurso" e padroniza o tamanho do título com as demais seções da configuração de fase de avaliação
+- As seções "Selos certificadores" e "Adicionar textos explicativos das avaliações" passam a carregar recolhidas por padrão na configuração de fases
+- Adiciona o botão "Editar" à esquerda de "Acessar" na listagem de oportunidades para usuários autenticados com permissão de edição, com disposição responsiva dos botões
+
+## [7.8.14] - 2026-09-25
+### Correções
+- Implementa db-update que corrige dados legados das etapas de inscrição dos editais: campos e anexos sem etapa são associados a uma etapa existente (ou a uma nova, quando não houver) e etapas vazias duplicadas são removidas
+- Deixa de exibir o título "Publicação de Resultados" nas fases de coleta de dados e na fase de publicação final do resultado de editais de fluxo contínuo sem data final; nas fases de avaliação, o título e os checkboxes de publicação de pareceres/nomes permanecem
+- Corrige a exportação da planilha da tabela de agentes, que gerava cabeçalhos quebrados com expressões técnicas (ex.: `terms?.area?.join('...')`, `type.name`) e deixava Área de atuação e Tipo de agente vazios; a planilha passa a trazer exatamente as colunas visíveis/selecionadas na tabela, com os títulos corretos e os dados preenchidos
+
+### Melhorias não funcionais
+- Adiciona o template hook `opportunity-basic-info-information-fields`, com sufixo `end`, para permitir que plugins e temas incluam campos após a descrição longa na edição de oportunidades
+
+## [7.8.13] - 2026-09-17
+### Correções
+- Na redistribuição de avaliações, aplica inclusões manuais antes do balanceamento e ordena de forma estável (`num`, `id`)
+- Corrige desempate por campos agent-owner/collective resolvendo o tipo real do metadado do agente
+- Na lista de inscrições da 1ª fase, a coluna Pontuação deixa de sumir quando o edital tem fase técnica posterior
+- Na planilha de inscritos, os cabeçalhos dos campos do formulário voltam a usar o título (label) em vez de `field_*`
+
+### Melhorias
+- Facilita a reordenação de colunas no entity-table com auto-scroll e indicador visual ao arrastar
+- Padrão de colunas do entity-table por contexto (`@control` na entidade); listagens gerais com saasSuperAdmin
+- Define padrão inicial de sistema para a tabela de inscrições (sem `field_*`) quando ainda não há padrão salvo
+- Exibe "Sim"/"Não" na coluna e na planilha para "A inscrição está concorrendo por cotas?" (`appliedForQuota`)
+
+## [7.8.12] - 2026-09-16
+### Correções
+- Ajusta o controle de acesso da API pública para restringir a consulta de inscrições e informações associadas a usuários não autenticados.
+- Corrige a exportação de planilha da lista de avaliações, que ignorava as colunas escolhidas em "Selecionar dados" e gerava sempre o mesmo conjunto fixo, passando a trazer exatamente as colunas selecionadas com os respectivos dados, inclusive os campos do formulário de inscrição
+
+## [7.8.11] - 2026-09-10
+### Correções
+- Na limpeza de assets órfãos, preserva templates Angular em `html/` e invalida caches Redis zumbis (`ASSET_URL`/`publishAsset` apontando para arquivo inexistente), evitando 404 no form-builder; o cron deixa de engolir stderr para que falhas e invalidações apareçam no log do container
+
+## [7.8.10] - 2026-09-09
+### Correções
+- Mantém visíveis, após recarregar a página, os filtros individuais configurados para cada pessoa avaliadora na distribuição das avaliações
+- Corrige erro que impedia a exportação de planilha de inscritos funcionar corretamente 
+
+## [7.8.9] - 2026-09-02
+### Correções
+- Na prévia do formulário de inscrição, restaura os seletores de categoria, tipo de proponente e faixa e faz as etapas condicionais acompanharem a seleção, mantendo a navegação em uma etapa válida quando ela muda
+- Impede que a limpeza de assets órfãos apague templates HTML ainda referenciados no cache (ex.: `edit-box.html` do form-builder/embedTools), passando a proteger `.html`/`.htm` e chaves Redis de `publishAsset`
+
+## [7.8.8] - 2026-09-01
+### Correções
+- Corrige falha no build Docker do CI com pnpm 10 (ERR_PNPM_IGNORED_BUILDS), aprovando os build scripts necessários e fixando a versão do pnpm
+
+## [7.8.7] - 2026-09-01
+### Correções
+- Corrige os filtros de período de inscrição nas listas de oportunidades para enviar o timestamp completo (YYYY-MM-DD HH:mm) em vez de apenas a data, classificando corretamente as inscrições abertas, futuras e encerradas
+- Corrige ocultação do resumo do agente ao desmarcar campo visível para avaliadores
+
+### Melhorias
+- Ajusta tamanho dos cards da seção "Em destaque" na página inicial
+- Ajusta tamanho dos cards da seção "Editados recentemente" no painel de controle
+- Nova flag opcional (AGENTS_REQUIRED_DOCUMENTS_BY_TYPE) para exigir CPF em agentes Individuais e CNPJ em agentes Coletivos em todo salvamento, com os formulários marcando o campo obrigatório conforme o tipo; desativada por padrão
+- Modal de criação de agente exibe automaticamente CPF/CNPJ conforme o tipo quando a flag está ativa (sem *obrigatório, padrão hide-required dos modais de criação)
+- Torna colapsáveis as seções de textos explicativos e selos na config de avaliação
+
+## [7.8.6] - 2026-08-13
+### Correções
+- Corrige erro que podia interromper o carregamento da página quando a data de um selo de verificação estava em branco
+- Envolve textos hardcoded em funções de tradução em telas BaseV1, componentes Vue e confirmações em JavaScript
+- Completa as traduções em espanhol (es_ES) com as strings novas
+
+### Melhorias
+- Permite aplicar um status do resultado da avaliação a uma lista específica de inscrições, nos métodos técnico, simplificado, documental e contínuo
+- Passa a limpar automaticamente arquivos antigos de CSS, JavaScript e imagens publicados que ficavam acumulados no servidor, sem remover nada que ainda está em uso
+
+### Melhorias nos selos validadores
+- Mostra o **status de cada campo** do selo (válido, prestes a vencer, vencido etc.) na ficha e no formulário de avaliação, para o avaliador entender o que está ok e o que precisa de atenção
+- Permite **concessão parcial do selo** na avaliação documental: o selo pode ser aplicado só aos campos que passaram, conforme os invalidadores configurados
+- Permite configurar **condições nos invalidadores**: um documento só é exigido quando o proponente responde de determinado jeito no formulário (por exemplo, só pedir comprovante de PCD se a pessoa se declarar PCD)
+- A **concessão de selos após a avaliação documental** também respeita essas condições: invalidadores relevados (condição não aplicável à inscrição) não impedem a concessão do selo
+- Avisa o gestor quando o formulário da inscrição ainda **não tem os campos** necessários para a validação automática por selos funcionar
+- Inclui coluna, filtros e indicação de isenção por selos na tabela e na planilha de avaliações
+- Exibe corretamente os anexos `@` do agente na inscrição, na edição do perfil, na single e nas listagens/planilhas (com link para download)
+
+### Correções
+- Na redistribuição de avaliações, inclusões manuais passam a contar na carga pendente do comparador antes da distribuição automática (e a ordem das inscrições fica estável por `id`), evitando que o mesmo avaliador receba a próxima inscrição por acaso
+- Na avaliação documental, o link de download do arquivo não cobre mais o campo inteiro: clicar no campo abre o formulário de avaliação e clicar no nome do arquivo continua baixando
+- Corrige erro que podia interromper o carregamento da página quando a data de um selo de verificação estava em branco
+
+## [7.8.5] - 2026-08-06
+### Correções
+- Exibe todas as mensagens retornadas pelo backend quando o salvamento de uma entidade falha por validação, incluindo erros de campos ocultos ou somente leitura
+- No e-mail de solicitação de exclusão de conta, as quebras de linha da mensagem aparecem corretamente, sem mostrar códigos HTML
+- Na edição do agente, o aviso de campos obrigatórios fica alinhado com os demais avisos e cards da página
+- Após publicar, despublicar, excluir ou recuperar uma entidade no painel, o status na tela é atualizado de imediato
+
+### Melhorias
+- Ajusta tamanho dos cards da seção "Oportunidades do momento" na página inicial
+- Quando a conta é excluída de forma parcial ou permanente, a pessoa recebe um e-mail confirmando o que foi feito
+- Melhora a aparência e a organização do bloco de e-mail e senha na página de detalhes do usuário
+- Por padrão, se o perfil ainda não estiver completo, a pessoa é direcionada para terminá-lo antes de seguir no sistema
+
+## [7.8.4] - 2026-08-04
+### Correções
+- Corrige a configuração do formulário da fase de recurso para criar a etapa inicial automaticamente e exibir corretamente a obrigatoriedade de campos e anexos ao editá-los
+- Torna idempotente o db-update que cria índices em diversas tabelas, evitando erro no boot quando os índices já existem
+- Inclui a fonte ElegantIcons no BaseV2 para que o publish de assets a disponibilize em `/assets/fonts/`, evitando ícones quebrados no EmbedTools (form-builder)
+- Corrige login via Google que não salvava o nome do usuário no perfil, por não solicitar o escopo de perfil na autenticação
+- Corrige a opção de obrigatoriedade ao adicionar campos e anexos sucessivos no formulário de inscrição, evitando que o próximo item apareça marcado como obrigatório por causa da configuração anterior
+- Corrige erro na ficha do agente ao listar agentes relacionados quando o mesmo grupo tem convite pendente e relação ativa
+- Corrige visualização mobile da aba 'Inscrições e Resultados' na edição da oportunidade
+
+### Melhorias
+- Adiciona teste automatizado para evitar que volte a quebrar a listagem de agentes relacionados com convite pendente
+
+## [7.8.3] - 2026-07-30
+### Correções
+- Corrige o overflow da comissão de avaliação na fase de recurso, evitando que botões internos fiquem com largura estourada
+- Mantém o botão "Salvar e publicar" visível em oportunidades em rascunho que já possuem configuração de método de avaliação
+- No envio de denúncia e contato/sugestão, retorna erro em JSON quando o captcha é inválido ou ausente, em vez de falha genérica
+- Corrige a configuração do formulário da fase de recurso para criar a etapa inicial automaticamente e exibir corretamente a obrigatoriedade de campos e anexos ao editá-los
+
+### Melhorias
+- Permite enviar o contato/sugestão ao dono da entidade e aos agentes do grupo "Administrado por", via configuração `suggestion.sendToEntityAdmins`
+- Adiciona testes automatizados do módulo CompliantSuggestion e da regressão do botão "Salvar e publicar"
+
+## [7.8.2] - 2026-07-24
+### Correções
+- O botão Voltar da tela de avaliação leva de volta à lista de onde a pessoa veio (lista completa da gestão ou lista do avaliador), mesmo depois de trocar de inscrição pelo menu lateral
+- No menu lateral da avaliação, os links continuam apontando para o avaliador certo quando um gestor navega em nome de outra pessoa
+- Se a pessoa abrir a avaliação da própria inscrição, o sistema mostra um aviso e bloqueia o formulário
+- Na lista de um avaliador específico, aparecem só as avaliações dele — mesmo que essa pessoa também seja gestora do edital
+- Impede salvar avaliação em inscrição que não foi atribuída à pessoa, e também impede o proponente de avaliar a própria inscrição; o gestor ainda pode editar uma avaliação já feita por outro avaliador
+- Na tabela de avaliações, o link abre a avaliação do avaliador daquela linha, evitando que o gestor acabe criando avaliação em nome próprio por engano
+- Ajusta as cores do status no acompanhamento da inscrição para bater com a legenda oficial: Pendente e Rascunho em preto, Inválida em roxo, Não selecionada em vermelho, Suplente em laranja e Selecionada em verde
+- Impede que um campo numérico deixado em branco seja salvo como zero, o que fazia o sistema achar que havia valor preenchido
+- Mostra corretamente o valor zero (0) na inscrição, em vez de aparecer como “campo não informado”
+- Corrige erro de renderização na galeria de vídeos ao editar o título, quando o popover montava o formulário antes de `newData` existir
+
+### Melhorias
+- Ao adicionar ou trocar um avaliador na comissão, avisa se a pessoa também está inscrita no edital e que não avaliará a própria inscrição
+- Deixa esse aviso mais visível e fácil de entender nos cards da comissão de avaliação
+- No campo numérico do formulário, permite escolher se o zero é aceito e limitar a quantidade mínima e máxima de dígitos
+- Adiciona testes automatizados para o aviso de inscrição própria do avaliador
+- Adiciona testes automatizados para as regras do campo numérico (aceitação do zero e quantidade de dígitos)
+- Adiciona testes automatizados para o bloqueio de avaliação indevida e de autoavaliação
+- Adiciona testes de regressão para a lista do avaliador, o aviso na autoavaliação, o botão Voltar e a navegação correta
+
+### Melhorias não funcionais
+- Adiciona hook `evaluationMethod.distributionComparator` para permitir que temas personalizem a ordem de prioridade dos avaliadores durante a redistribuição de comissões
+
+## [7.8.1] - 2026-07-21
+### Melhorias
+- Melhora a exportação do PDF de inscrição para exibir campos de endereço e tabela em formato legível
+- Melhora a exportação do PDF de inscrição para exibir links e arquivos de agente de forma legível
+- Melhora o uso de modelos de oportunidades para criar novas oportunidades sem copiar as datas das fases
+
+### Correções
+- Ordena os cards do painel (inscrições recentes, oportunidades abertas e avaliações disponíveis) do mais recente para o mais antigo
+- Corrige warning de variável indefinida (`$committee_where`) no repositório de avaliações quando a comissão não é informada
+- Corrige campos condicionais do formulário de inscrição quando o campo pai é um `checkboxes`, considerando o valor esperado dentro do array marcado
+- Corrige a listagem de fases da oportunidade para exibir corretamente fases de avaliação na configuração
+- Corrige o cálculo do bônus de pontuação para campos de múltipla escolha (`checkboxes`) quando configurados com `eligibleValues`, aplicando apenas o bônus correspondente às opções efetivamente selecionadas
+- Corrige avisos de validação do monitoramento que apareciam indevidamente na fase de inscrição
+- Corrige exportação de campos multiselect do plano de trabalho para evitar valores "Array | Array"
+- Corrige o carregamento da configuração de cotas em oportunidades antigas sem regras de cotas cadastradas.
+- Corrige erro na configuração de formulário causado por valores numéricos salvos como texto em campos de limite de opções, linhas e arquivos
+- Corrige a validação da resposta do recurso para impedir concluir ou enviar avaliação contínua sem selecionar o status da inscrição
+- Corrige o importador de eventos para aceitar eventos noturnos que ultrapassam a meia-noite (ex.: das 18h às 3h)
+- Impede o reprocessamento de uma mesma planilha no importador de eventos para evitar duplicações silenciosas
+- Reverte as alterações do importador de eventos quando ocorre falha durante a importação, evitando eventos parcialmente criados
+- Amplia os tipos de CSV aceitos no importador de eventos para contemplar variações enviadas por diferentes navegadores
+- Atualiza a biblioteca de leitura de planilhas do importador de eventos para uma versão mantida ativamente
+- Melhora as mensagens de erro exibidas ao usuário durante o processamento da planilha de eventos
+
+## [7.8.0] - 2026-07-02
+### Novas Funcionalidades
+- Módulo de **fase de execução** para acompanhar projetos aprovados após o resultado. O agente contemplado pode abrir pedidos de alteração (data, orçamento, local etc.), cada um avaliado por uma comissão. Os pedidos ficam registrados no histórico e não atrapalham as fases seguintes de prestação de informações
+- Na fase de execução, os pedidos aparecem na **ficha da inscrição**, na **linha do tempo** e na **lista do gestor** — com identificação, número da inscrição original e ordem de criação. O gestor cria a fase por um modal simples e monta o formulário livremente, sem categorias fixas
+- **Bônus de pontuação configurável** na avaliação técnica, com regras por políticas afirmativas em percentual ou pontos fixos, teto máximo, exibição em tabelas e exportações, e compatibilidade com configurações antigas
+- Permite tornar a **foto de perfil obrigatória** em agentes, espaços, projetos, eventos e oportunidades, configurável por variáveis de ambiente em cada tipo de entidade
+- Adiciona botão para **duplicar campos** do formulário de inscrição, logo abaixo do original
+- Adiciona botão para **duplicar anexos** do formulário de inscrição, copiando também o arquivo modelo
+
+### Melhorias no Plano de Metas e Monitoramento
+- Amplia o **Plano de Metas e Monitoramento** com dezenas de campos novos e configuráveis para planejar metas e entregas (período, orçamento, equipe, comunicação, acessibilidade, comunidades, receita, evidências etc.) e registrar o que foi executado no acompanhamento
+- Permite ao gestor escolher quais campos são obrigatórios e tornar o **segmento artístico-cultural** configurável por oportunidade
+- Adiciona **tutorial passo a passo** no preenchimento do plano, da meta e de cada entrega
+- Permite **limitar a duração máxima do projeto** (em meses) e o **número máximo de entregas** por meta
+- Salva o plano de metas junto com as ações de salvar, salvar e sair e enviar a inscrição, sem botão separado de salvar meta
+- Mantém a **mesma ordem de campos** na inscrição, na visualização, na avaliação e na exportação
+- Exibe campos do plano na **ficha de avaliação** e inclui planejamento e monitoramento na **exportação das inscrições**
+- Usa formato de **moeda** nos campos de valores do monitoramento
+- Melhora as **validações de campos obrigatórios** conforme o que o gestor configurou na oportunidade
+- Preserva o **detalhamento de coautoria** ao salvar o plano
+- Corrige avisos de monitoramento que apareciam indevidamente já na fase de inscrição
+- Corrige exportação de campos de múltipla escolha que exibiam valores estranhos na planilha
+- Corrige envio de **arquivos nas entregas** do plano de metas
+
+### Melhorias nas avaliação
+- Implementa visualização das datas de recurso no step vertical de fases
+- Adiciona configuração para exibir ou ocultar o detalhamento da avaliação anterior na fase de recurso
+- Exibe o detalhamento da avaliação da fase anterior para avaliadores da fase de recurso
+- Adiciona **números sequenciais nos avaliadores** das comissões, na interface, na tabela e na planilha de avaliações, com atualização automática em editais já existentes
+- Permite buscar avaliadores por ID do agente no formato #ID e por e-mail do usuário ao adicioná-los ou substituí-los nas comissões de avaliação
+
+### Melhorias
+- Adiciona campo de busca para encontrar colunas por palavra-chave nas listagens em tabela das entidades
+- Permite ao saasSuperAdmin ordenar globalmente as colunas das tabelas que utilizam o entity-table, por meio de drag and drop
+- Suprime o campo RG do cadastro do agente e dos campos @, renomeia o CPF para **CPF / Carteira de Identidade Nacional (CIN)** e remove campos bancários da lista de campos @ do agente
+- Impede que usuários autenticados **menores de 18 anos** enviem mensagens de contato pelas páginas das entidades
+- Ordena alfabeticamente as opções de tipos de campos na lista de campos @
+- Ajusta exportação da planilha para organizar as colunas segundo a ordem definida pelo saasSuperAdmin
+- Melhora a exibição do botão Minha conta no header para exibir o nome do perfil do agente responsável logado
+- Adiciona configuração para exigir foto de perfil do agente coletivo vinculado na inscrição para proponentes do tipo coletivo e pessoa jurídica
+- Permite criar agentes no fluxo de inscrição de oportunidades respeitando as permissões: agente individual apenas para administradores e agente coletivo para usuários comuns quando exigido pela inscrição
+- Adiciona campos de CNPJ e minicurrículo à listagem de pessoas dos formulários de inscrição, com validação de CPF e CNPJ
+- Melhora a performance da criação de oportunidades a partir de modelos ao reduzir salvamentos repetidos de fases e metadados
+- Melhora a listagem de modelos ao identificar corretamente quais são oficiais pelo selo verificado
+
+### Correções
+- Corrige aviso de chave indefinida no campo de avatar do formulário de inscrição quando a obrigatoriedade está desativada
+- Corrige verificação de avatar obrigatório para não atrapalhar a criação de agente novo na inscrição
+- Evita erro ao selecionar inscrições de proponente coletivo para fases posteriores quando a oportunidade não utiliza vínculo com agente coletivo e não há selo configurado
+- Aplica texto de internacionalização faltante no componente opportunity-registration-table
+- Corrige acento faltante no texto "Gênero" na listagem de pessoas do formulário de inscrição
+- Corrige a exibição do nome do agente coletivo nos cards da tela Minhas inscrições
+- Corrige a chave de internacionalização do texto "Elegível para cotas" no componente de listagem de inscrições
+- Evita erro ao hidratar campos de data inválidos em entidades
+- Corrige a importação de formulários de inscrição para preservar os formatos aceitos configurados nos campos de anexo
+- Corrige erro ao reordenar etapas na configuração do formulário de oportunidades
+- Corrige a exportação de oportunidades para não incluir datas das fases de avaliação quando a opção de exportar datas das fases estiver desmarcada
+- Corrige o cálculo ponderado dos subtotais na tela de avaliação técnica
+- Corrige os templates de e-mail da fase de recurso
+- Corrige a exibição das opções de campos de seleção no formato radio para organizá-las verticalmente na ficha de inscrição
+- Corrige a ordenação das últimas planilhas exportadas para exibir os arquivos mais recentes primeiro
+- Corrige o uso de modelos de oportunidades para respeitar a visibilidade pública, validar permissões, preservar referências de campos condicionais, evitar fase extra e tratar revisões anteriores ausentes
+- Corrige erro 500 na lista de inscrições causado por fases de prestação de informações no cálculo de fase anterior
+- Corrige erro na listagem de inscrições de fases sem avaliação configurada
+- Corrige validação de datas entre fases para respeitar uma sequência lógica
+- Corrige erro ao excluir configuração de avaliação que impedia excluir fases corretamente
+- Corrige personalização de cores no Theme Customizer quando o subsite ainda não tinha cores salvas
+- Corrige upload de arquivos xlsx no grupo de downloads das entidades
+- Reforça a validação de tipos de arquivo permitidos no upload
+- Corrige redirecionamento indevido para a tela de suporte ao abrir a ficha de uma inscrição
+- Melhora o funcionamento de popovers e seleção de entidade ao criar agente dentro da inscrição
+
+### Melhorias não funcionais
+- Otimiza a construção das imagens Docker nos workflows de CI, develop e release candidate ao reutilizar o cache do Buildx armazenado no GitHub Actions
+- Permite configurar o cabeçalho HTTP usado para identificar o IP do visitante em ambientes com proxy (ex.: Cloudflare), via variável `PROXY_HEADER`
+- Evita que a subida do ambiente falhe quando a tabela de papéis do sistema ainda não existe no banco
+- Adiciona atualizações automáticas de banco para normalizar bônus de pontuação antigos e preencher números sequenciais de avaliadores em editais existentes
+
+## [7.7.64] - 2026-07-02
+### Melhorias
+- Restringe a exclusão de critérios e seções de avaliação técnica e de qualificação documental: somente administradores podem excluir quando já existem avaliações iniciadas, concluídas ou enviadas
+- Ao excluir critério ou seção, remove automaticamente as notas/respostas correspondentes do legado das avaliações existentes e reconsolida o resultado
+- Exibe avisos distintos para administradores e demais usuários na configuração de critérios das avaliações técnica e de qualificação documental
+- Desabilita visualmente os botões de exclusão de critérios e seções para usuários sem permissão
+
+## [7.7.63] - 2026-06-24
+### Melhorias
+- Melhora a performance da listagem de modelos de oportunidades ao evitar consultas repetidas para identificar modelos oficiais.
+
+### Correções
+- Corrige a listagem de avaliações para exibir fases de recurso na tela Minhas avaliações
+- Corrige importação de formulários via TXT para que não deixa de importar os filtros por categoria, tipo de proponente e faixa nos campos
+
+## [7.7.62] - 2026-06-19
+### Correções
+- Corrige os builders das avaliações técnicas e da qualificação documental para que aceitem os dados completos de configuração dos critérios
+
+## [7.7.61] - 2026-06-19
+### Melhorias
+- Implementa flag que desliga por padrão o envio de e-mails do recurso
+- Melhora configuração de cretérios das avaliações técnica e qualificação documental, para que nao fique validando e dando erros a cada clique
+
+## [7.7.60] - 2026-06-18
+### Correções
+- Corrige a exibição das opções de campos de seleção no formato radio para organizá-las verticalmente na ficha de inscrição
+- Corrige erro na criação de critérios na avaliação de qualificação documental
+
+## [7.7.59] - 2026-06-17
+### Melhorias
+- Implementa uma configuração na fase de recurso que permite habilitar ou desabilitar o sincronismo automático das inscrições quando o recurso é deferido
+
+## [7.7.58] - 2026-06-16
+### Correções
+- Evita que os ponteiros nextPhaseRegistrationId e previousPhaseRegistrationId fiquem vazios durante o sincronismo da fase de recurso
+
+## [7.7.57] - 2026-06-16
+### Correções
+- Corrige a propagação de inscrições entre fases, garantindo que apenas inscrições devidamente selecionadas avancem para as fases posteriores
+- Corrige CSS da exibição dos ícones de ações (editar, excluir e copiar) na configuração dos campos do formulário
+
+## [7.7.56] - 2026-06-15
+### Correções
+- Implementa a correção na distribuição dos avaliadores de forma a evitar que uma avaliação já realizada seja desatribuída de um determinado avaliador
+
+## [7.7.55] - 2026-06-12
+### Melhorias
+- Valida integridade entre seções e critérios de avaliação no backend, impedindo salvamento de critérios órfãos ou com campos obrigatórios vazios
+- Exibe mensagens de erro do backend ao salvar configuração de avaliação por qualificação
+- Adiciona testes automatizados para validação de configuração de avaliação
+
+### Correções
+- Faz ajustes em nomes de colunas na tabela e planilha de avaliações
+- Corrige erro ao carregar políticas afirmativas sem pontuação configurada
+- Desativa log de tempo de execução durante testes para reduzir ruído no output
+- Ajusta layout da configuração de exclusão de contas em Gestão de usuários
+
+## [7.7.54] - 2026-06-10
+### Correções
+- Corrige exibição dos modelos criados para o saasAdmin
+- Corrige inclusão e exclusão de avaliadores na comissão de avaliação sem precisar recarregar a página
+- Protege o id da entidade em cache quando a API retorna erro no findOne e ao atualizar permissões das fases
+
+## [7.7.53] - 2026-06-09
+### Melhorias
+- Implementa fluxo LGPD de solicitação de exclusão de conta em Conta e Privacidade, com modais de confirmação, envio de e-mail ao responsável configurável (ou aos administradores do subsite / todos os usuários com papel administrativo quando não houver e-mail definido) e cópia opcional para o usuário
+- Adiciona configuração do e-mail destinatário em Gestão de usuários (global via PUBLIC_FILES ou por subsite)
+- Desativa exclusão direta de conta do módulo DeleteAccount em favor do fluxo de solicitação
+- Evita o carregamento indesejado de texto e botão ao utilizar o mc-modal
+
+### Correções
+- Melhorar controle de permissões para exclusão de fases
+- Corrigir validação de campos de inscrição configurados incorretamente
+- Corrige o sincronismo das inscrições na fase de recurso, garantindo que avancem normalmente entre as fases
+
+## [7.7.52] - 2026-06-05
+### Correções
+- Corrige exibição do botão 'Ver mais' para aparecer apenas no mobile
+
+## [7.7.51] - 2026-06-03
+### Correções
+- Corrige distribuição de avaliadores para respeitar quotas por comissão independentemente, sem balanceamento global entre comissões
+- Impede salvamento de valores negativos no campo "Limitar número de avaliadores por inscrição" com validação no frontend e backend
+- Corrige o breadcrumb da página de detalhes (single) de oportunidades
+- Ajusta exibição do campo @ agente coletivo na configuração de formulário apenas quando a vinculação estiver ativa
+- Ajusta importação de campos para importar apenas campos em fases secundárias sem categorias/faixas/tipos
+
+## [7.7.50] - 2026-06-01
+### Correções
+- Ajusta criação de categorias para impossibilitar salvamento de espaço
+- Ajusta exibição do resultado da fase na tela de acompanhamento quando o status é pendente
+
+## [7.7.49] - 2026-05-29
+### Melhorias
+- Aplicação de função `text` no titulo da página de Termos e Condições
+
+## [7.7.48] - 2026-05-29
+### Correções
+- Ajusta layout do mobile da listagem de oportunidades
+- Adiciona o botão "Ver mais" e limita a descrição dos cards das entidades a no máximo 3 linhas no mobile.
+
+## [7.7.47] - 2026-05-28
+### Correções
+- garante que uma fase de recurso não seja criada de forma incompleta, faltando metadados ou informações que a definam corretamente como uma fase de recurso
+- Implementa mecanismo para encerrar editais de fluxo contínuos, sendo possível definir uma data de término
+- Ajustar a coluna Elegível na tabela de inscritos para que exiba 'Sim' ou 'Não' ao invés de um valor booleano
+- Faz ajuste para que o valor do eligible seja retornado corretamente no endpoint findRegistration
+- Faz ajuste no carregamento de quotas para que o carregamento ocorra de forma performática.
+
+## [7.7.46] - 2026-05-26
+### Correções
+- Oculta aba 'Eventos' em espaços sem eventos cadastrados
+
+### Melhorias
+- Adiciona a opção 'Inscrições' no tipo de contato
+
+## [7.7.45] - 2026-05-26
+### Correções
+- Ajuste estrutura de Quotas para evitar estouro de memoria
+
+## [7.7.44] - 2026-05-25
+### Correções
+- Evita estouro de memória ao listar inscrições em editais com várias fases
+- Melhora performance do cálculo e exibição de cotas
+
+## [7.7.43] - 2026-05-21
+### Correções
+- Remove mensagens repetitivas nos logs do servidor sobre prioridade dos processos de atualização de permissões
+- Ao abrir uma ficha de avaliação, o sistema deixa de colocar o edital inteiro na fila de atualização de permissões em segundo plano
+- A página de avaliação abre bem mais rápido: o plano de trabalho só é carregado nas fases de prestação de contas que realmente usam esse formulário
+- Reduz a quantidade de informações enviadas ao navegador ao exibir as etapas do formulário de inscrição
+- Evita reprocessar os mesmos campos do formulário de inscrição várias vezes ao montar a página
+
+## [7.7.42] - 2026-05-20
+### Correções
+- Melhora performace do sistema de criaçao de cache de permissão
+
+## [7.7.41] - 2026-05-19
+### Correções
+- Corrige erro que impedia o botão exibir detalhamento de aparecer na tela do avaliador do recurso
+
+## [7.7.40] - 2026-05-15
+- ### Correçoes
+- Corrige erro de estouro de memória durante a ordenaçao por cota
+- Corrige erro que impedia a sincronização de inscriçoes entre fases
+
+## [7.7.39] - 2026-05-15
+### Correções
+- Ajusta exibiçao do nome e id do avaliador nas fases de recurso e normais no exbir detalhamento
+
+## [7.7.38] - 2026-05-14
+### Correções
+- Corrige erro que impedia a ordenaçao por cotas funcionar corretamente
+
+### Melhorias
+- Permite que o avaliador do recurso visualize o detalhamento da avaliação anterior diretamente na tela de avaliação do recurso
+
+## [7.7.37] - 2026-05-14
+### Correções
+- Remove style inline na single da registration
+
+## [7.7.36] - 2026-05-08
+### Correções
+- Corrige exibiçao das abas com permissão na aba minhas inscrições e no gerênciamento de usuários
+
+## [7.7.35] - 2026-05-08
+### Correções
+- Implementa paginaçao no na área de minhas inscriçoes
+
+## [7.7.34] - 2026-05-08
+### Melhorias
+- Permite configurar a quantidade de itens exibidos por página nas abas de entidades, como agentes, espaços e projetos.
+- Adiciona nova aba "Com permissão" na tela de minhas inscrições, para visualizar inscrições onde você tem permissão de gestão.
+- Exibe apenas as inscrições do próprio usuário na tela "Minhas inscrições", evitando confusão com inscrições de outros.
+- Melhora a gestão de entidades dos usuários ao incluir a aba "Concedido" e ajustar a quantidade de itens exibidos por página.
+- Faz organizaçao no CHANGELOG.md
+
+## [7.7.33] - 2026-05-06
+### Correções
+- Corrige getters de fases para ignorar fases deletadas (status > -10) em previousPhase, previousPhases, nextPhase, nextPhases e lastPhase
+- Corrige condição de corrida em EntityTaxonomies::addTerm ao criar termos de taxonomia simultaneamente
+- Corrige erro de optional chaining em affirmative-policies--quota-configuration
+
+### Testes
+- Adiciona teste de deleção de fase intermediária em oportunidades
+- Corrige testes flaky em EvaluationsDistributionTest, OpportunityExporterTest e EvaluationMethodTechnicalTest
+
+## [7.7.32] - 2026-05-04
+### Correções
+- Possibilita que, no importador de oportunidades, o usuário possa escolher entre importar a oportunidade já publicada ou em rascunho.
+
+## [7.7.31] - 2026-04-28
+### Correções
+- Corrige salvamento de avaliadores da inscrição por administradores da oportunidade
+
+## [7.7.30] - 2026-04-28
+### Correções
+- Corrije erro que redireciona o usuário admin sempre para a tela de suporte ao acessar a single de inscriçao
+- Corrige erro que quebra o recurso devido à falta de datas configuradas nas fases avaliativas
+- Corrige o carregamento dos detalhes do recurso quando o step vertical está fechado.
+
+## [7.7.29] - 2026-04-22
+### Correções
+- Corrige erro no upload de arquivos xlsx no grupo de downloads das entidades
+
+## [7.7.28] - 2026-04-20
+### Melhorias
+- Melhora validação de tipos de arquivo, impedindo que sejam feitos uploads de arquivos potencialmente perigosos
+
+## [7.7.27] - 2026-04-16
+### Correções
+- Corrige erro que impedia enviar a inscrição devido a ero na data de nascimento
+- Corrige carregamento do componente request-agent-avatar
+
+## [7.7.26] - 2026-04-14
+### Correções
+- Corrige importação de oportunidades para evitar referência curcular
+
+## [7.7.25] - 2026-04-13
+### Correções
+- Corrige deleção indevida de roles, agents e procurations ao salvar entidades. Os mapeamentos ManyToOne de Agent, Role e Procuration não declaravam inversedBy, impedindo o Doctrine de sincronizar as coleções OneToMany do User, o que causava orphanRemoval durante computeChangeSets() no flush
+- Corrige detached entity ao deletar Job após execução em lotes
+- Corrige incompatibilidade de assinatura em EvaluationSimpleBuilder::setStatus
+
+### Refatoração
+- Remove orphanRemoval=true de todos os mapeamentos OneToMany. Deletes são controlados pelo método delete() das entidades, e cascade={"remove"} + onDelete="CASCADE" garantem a deleção em cascata
+
+## [7.7.24] - 2026-04-13
+### Correções
+- Corrige erros durante a execução das migraçoes mc-updates e db-updates
+
+## [7.7.23] - 2026-04-12
+- Corrige deleção indevida de roles, agents e procurations ao salvar entidades. Os mapeamentos ManyToOne de Agent, Role e Procuration não declaravam inversedBy, impedindo o Doctrine de sincronizar as coleções OneToMany do User, o que causava orphanRemoval durante computeChangeSets() no flush
+
+## [7.7.22] - 2026-04-07
+### Correções
+- Faz correção na criação e utilização de modelos que ocasionavam erros na criação das etapas do formulário de inscrição
+
+## [7.7.21] - 2026-04-02
+### Correções
+- Corrige um erro que impedia a exibição do formulário de avaliação contínua do recurso
+
+## [7.7.20] - 2026-03-30
+### Melhorias
+- Implementa visualização das datas de recurso no step vertical de fases
+
+## [7.7.19] - 2026-03-27
+### Correções
+- Faz ajuste para que os campos do tipo Moeda sejam validados corretamente corretamente quando obrigatorios
+- Corrige um erro ao excluir a configuração de avaliação, garantindo que a exclusão das fases continue funcionando corretamente sem falhas
+
+## [7.7.18] - 2026-03-20
+### Melhorias
+- Implementa novo botão na ação da tabela de avaliações para poder excluir um avaliador da inscrição
+- Melhora a configuração de inclusão e exclusão de avaliadores na inscrição (checkboxes), para que tenha efeito imediato, sem a necessidade de redistribuição
+
+### Correções
+- Corrige erro no duplicador de oportunidade que impede a cópia correta dos arquivos
+- Corrige um erro ao excluir a configuração de avaliação, garantindo que a exclusão das fases continue funcionando corretamente sem falhas
+
+## [7.7.17] - 2026-03-19
+### Correções
+- Corrige exibição do indicador de campo obrigatório (*obrigatório) no label do campo de listagem de endereços quando configurado como obrigatório pelo gestor.
+- Corrige exibição do indicador de campo obrigatório (*obrigatório) no label do campo de listagem de pessoas quando configurado como obrigatório pelo gestor.
+- Corrige expressão Angular inválida no `ng-if` do campo de deficiências na listagem de pessoas da ficha de inscrição
+- Corrige salvamento do campo de deficiências na listagem de pessoas da ficha de inscrição
+- Corrige erro que impedia a distribuição de avaliações em inscrições de fases intermediárias
+
+## [7.7.16] - 2026-03-11
+### Melhorias
+- Implementação de novo campo de tabela para ser usado nos formulários de inscrições
+- Atualiza pacotes pnpm
+- Implementa testes para a aplicação de resultados das avaliações
+
+## [7.7.15] - 2026-03-10
+### Correções
+- Aplica verificação para evitar a criação de sessões sem critérios de avaliação no método de avaliação técnica.
+- Ajusta a exibição da aba de avaliação na oportunidade para o avaliador do edital.
+- Corrige erro ao formatar a data no método _logMailMessage()
+
+### Melhorias
+- Inclui nova área de atuação "Cultura do Povo Tupiniquin"
+- Melhorias na documentação PHP DOC do sistema
+
+## [7.7.14] - 2026-03-06
+### Correções
+- Corrige endpoint createAppealPhaseRegistration para verificar se já existe inscrição do proponente na fase de recurso
+- Ajusta a exibição dos avaliadores da fase de recurso na página individual da inscrição, permitindo selecionar a lista de inclusão e exclusão de avaliadores das fases avaliativas do recurso.
+- Implementa mc-update para fazer a normalização dos campos de CPF e CNPJ do registration_meta
+- Remove método que removia máscaras de CPF e CNPJ no momento do envio da inscrições
+- Implementa comportamento correto de fluxo contínuo com data final: inicializa publishTimestamp da última fase, inicializa datas da fase de avaliação e propaga automaticamente alterações do publishTimestamp para as fases de avaliação vinculadas
+
+## [7.7.13] - 2026-03-06
+### Melhorias
+- Adiciona filtro de selos na tela de busca de eventos, ativável via variável de ambiente `EVENTS_FILTER_SEALS`
+- Adiciona filtro de estado e cidade na tela de busca de eventos, ativável via variável de ambiente `EVENTS_FILTER_STATES_AND_CITIES`
+
+### Correções
+- Ajusta filtro de arquivo na api para possibitar valores vazios
+
+## [7.7.12] - 2026-03-04
+### Correções
+- Faz ajuste no campo dataDeNascimento para que o formato de data seja interpretado corretamente.
+- Corrige exibição de campos na fase de recurso nas opções da configuração filtro de inscrição para avaliadores/comissão
+- Corrige endpoint createAppealPhaseRegistration para verificar se já existe inscrição do proponente na fase de recurso
+
+## [7.7.11] - 2026-03-03
+### Melhorias
+- Refatora o componente de Configuração filtro de inscrição para avaliadores/comissão
+- Adiciona opções de campos de seleção múltipla e checkbox no novo componente de configuração de filtro
+
+### Correções
+- Realiza a correção para o carregamento adequado das geodivisões do responsável na tabela e na planilha de inscritos.
+- Ajusta regra para permitir publicação de resultado da fase para antes, durante ou depois da data final da fase
+
+## [7.7.10] - 2026-03-02
+### Correções
+- Corrige erro de verificação de inscrições abertas no card de listagem de oportunidades
+
+## [7.7.9] - 2026-02-26
+### Melhorias
+- Adiciona possibilidade de filtro por arquivo na api
+
+## [7.7.8] - 2026-02-25
+### Correções
+- Corrige a remoção de avaliações quando um avaliador é excluído de uma comissão, afetando apenas a comissão correta.
+
+## [7.7.7] - 2026-02-24
+### Correções
+- Corrige a aplicação de resultados da avaliações por pontuação e classificação
+- Corrige a exibição do valor da coluna "Bônus por pontuação aplicadas a inscrição" na tabela de inscrições
+
+## [7.7.6] - 2026-02-22
+### Correções
+- Corrige permissão para administrador da oportunidade remover uma avaliação
+- Corrige os campos visíveis para o avaliador para nao ignorar campos com somente uma fase de coleta de dados
+
+## [7.7.5] - 2026-02-13
+### Correções
+- Corrige falha que impedia o carregamento correto de alguns avaliadores na tela das listas de inclusão e exclusão.
+
+## [7.7.4] - 2026-02-10
+### Melhorias 
+- Implementa uma flag no componente opportunity-evaluation-committee que permite indicar que os dados devem ser salvos no agente relacionado
+- Implementa getters e setters para persistir os filtros individuais dos avaliadores no agente relacionado
+- Ajusta a lógica de distribuição das avaliações para considerar os filtros definidos no agente relacionado
+- Implementa endpoints para configurar os filtros individuais dos avaliadores, cada um em seu respectivo agente relaciona
+
+## [7.7.3] - 2026-02-02
+### Correções
+- Corrige erro que impedia enviar a inscrição
+
+### Melhorias
+- Implementa teste para garantir o correto funcionamento do envio da inscrição
+
+## [7.7.2] - 2026-01-28
+### Correções
+- Correção no salvamento de metadados
+
+## [7.7.1] - 2026-01-26
+### Correções
+- Corrige exibição de anexos no PDF de inscrição, respeitando a ordem dos campos (displayOrder) e exibindo marcadores de campos obrigatórios
+
+## [7.7.0] - 2025-12-19
+### Novas Funcionalidades
+- Exportador / Importador de oportunidades
+- Lista de entidades seladas na single dos selos
+- Opção para habilitar página de certificado na configuração de selo
+- Aba de eventos na single de espaços com listagem de eventos programados no local
+- Aba de eventos na single de projetos com listagem de eventos vinculados e suas ocorrências
+- Fediverso como rede social nos metadados das entidades
+- Adiciona restrição de tipos de arquivo permitidos em campos anexo do formulário
+- Oportunidade apenas para divulgação - permite criar oportunidades informativas onde as inscrições não são feitas pela plataforma
+- Exportação de ficha de inscrição em PDF com mesclagem automática de anexos PDF em um único arquivo
+
+### Melhorias nas avaliação
+- Possibilidade de configuração de limite de inscrições para os avaliadores
+- Botão de excluir avaliação para os gestores da oportunidade
+- Mantém a avaliação como pendente enquanto não houver modificação, evitando que o simples acesso à página de avaliação marque a avaliação como iniciada
+- Novo filtro para comissão por data de envio da inscrição, possibilitando comissões que avaliem somente as inscrições enviadas em determinado período
+- Possibilidade de configurar uma lista de inscrições para os avaliadores das comissões
+- Substituição de avaliadores, passando todas as incrições que ainda não foram concluídas (pendentes e iniciadas) para um novo avaliador, sem redistribuir as avaliações
+
+### Melhorias
+- Redireciona usuario para o perfil quando o mesmo esta em rascunho ou com dados obrigatórios não preechidos
+- Adiciona suporte a autenticação JWT nas requisições para API [(1)](#770-snp)
+- Melhoria na exibição das mensagens de erro para capturar e exibir mensagens específicas
+- Melhora a comunicação da interface para deixar claro que a alteração de critérios ou sessões só deve ser feita por administradores quando já existirem avaliações técnicas enviadas.
+- Remove espaços múltiplos e espaços no início/fim do nome e nome completo das entidades
+- Adiciona campos de Galeria de Fotos, Vídeos e Downloads como opções de campos do agente responsável em formulários de inscrição, permitindo que o gestor solicite portfólio visual, galeria de vídeos ou documentos anexos que sincronizam automaticamente com o perfil do agente [(2)](#770-funarte)
+- Download em lote de anexos da inscrição em formato ZIP
+- Habilita as revisões para usuários, fases de avaliação, selos e funções de usuário
+
+### Correções
+- Corrige warnigs no navegador devido a problemas com o componente entity-field
+- Implementa verificações para evitar warnings indesejados referente ao componente de localização
+- Ajusta ApiQuery para evitar que _addFilterByMetadata crie JOIN's duplicados
+- Corrige função replaces da classe i
+- Corrige nome do hook entity().archive:after
+- Corrige busca pela chave primária da tabela Job
+- Impede que o usuarios que não são admnistradores alterem critérios ou sessões de critérios de avaliação técnica se já existem avaliações enviadas
+- Corrige erro ao salvar e publicar a entidade, que interpretava mensagens de erro de forma incorreta
+
+### Melhorias não funcionais
+- LifecycleCallbacks na Entities\SealRelation
+- Função \query que faz uma consulta no banco e imprime o resultado como uma tabela ascii
+- Impede a inserção do mesmo selo mais de uma vez em uma entidade
+- Possibilita a escrita de mc-updates para entidades fora do namespace MapasCulturais\Entities
+- Implementa novos hooks na edit de espaço e no componente entity-field
+- Infraestrutura para testes: novos builders, traits e directors
+
+### Créditos
+<a name="770-snp"></a>
+1. <small>Melhoria desenvolvida pelo Ministério das Cidades, através da Secretaria Nacional de Periferias, para o Prêmio Periferia Viva</small>
+<a name="770-funarte"></a>
+2. <small>Melhoria desenvolvida pela Funarte (Fundação Nacional de Artes) para a Rede das Artes</small>
+
+## [7.7.67] - 2026-05-06
+### Correções
+- Faz implementaçao para que a ficha de inscriçao do recurso tambems eja exibida na single
+
+##[7.6.66] - 2026-04-28
+### Correções
+- Garante que campos de anexo permaneçam desabilitados no formulário quando o agente de suporte possui permissão somente de leitura
+
+##[7.6.65] - 2026-04-28
+### Correções
+- Corrige erro que permitia aos agentes de suporte editarem campos, mesmo com permissões apenas de visualização
+
+##[7.6.64] - 2026-04-22
+### Correções
+- Corrige erro no upload de arquivos xlsx no grupo de downloads das entidades
+
+## [7.6.63] - 2026-04-20
+## Melhorias
+- Melhora validação de tipos de arquivo, impedindo que sejam feitos uploads de arquivos potencialmente perigosos
+
+## [7.6.62] - 2026-03-25
+### Correções
+- Faz ajuste para que os campos do tipo Moeda sejam validados corretamente corretamente quando obrigatorios
+
+## [7.6.61] - 2026-03-19
+### Correção
+- Corrige erro que impedia a distribuição de avaliações em inscrições de fases intermediárias.
+
+## [7.6.60] - 2026-03-17
+### Melhorias
+- Importação de campos do formulário agora é feita em segundo plano e um e-mail é enviado ao término informando o status da operação
+
+### Correções
+- Corrige erro que impedia a listagem de inscrições em rascunho no painel "Minhas inscrições" quando o período de inscrição do edital estava encerrado
+
+## [7.6.59] - 2026-03-16
+### Melhorias
+- Atualiza pacotes pnpm
+
+## [7.6.58] - 2026-03-13
+### Melhorias
+- Aplica melhoria para que possamos forçar o save em métodos PUT via header
+
+### Correções
+- Corrije erro no componente entity-field
+
+## [7.6.57] - 2026-03-10
+### Correções
+- Aplica verificação para evitar a criação de sessões sem critérios de avaliação no método de avaliação técnica.
+- Ajusta a exibição da aba de avaliação na oportunidade para o avaliador do edital.
+
+### Melhorias
+- Inclui nova área de atuação "Cultura do Povo Tupiniquin"
+
+## [7.6.56] - 2026-03-06
+### Correções
+- Corrige endpoint createAppealPhaseRegistration para verificar se já existe inscrição do proponente na fase de recurso
+- Ajusta a exibição dos avaliadores da fase de recurso na página individual da inscrição, permitindo selecionar a lista de inclusão e exclusão de avaliadores das fases avaliativas do recurso.
+- Implementa mc-update para fazer a normalização dos campos de CPF e CNPJ do registration_meta
+- Remove médodo que removia mascaras de cpf e cnpj no momento do envio da inscrições
+
+## [7.6.55] - 2026-03-04
+### Correções
+- Faz ajuste no campo dataDeNascimento para que o formato de data seja interpretado corretamente
+
+## [7.6.54] - 2026-03-03
+### Correções
+- Ajusta regra para permitir publicação de resultado da fase para antes, durante ou depois da data final da fase.
+
+## [7.6.53] - 2026-03-02
+### Correções
+- Corrige erro de verificação de inscrições abertas no card de listagem de oportunidades
+
+## [7.6.52] - 2026-02-27
+### Melhorias
+- Aplica melhoria no campo @ de endereço para possibilitar que se defina quais subcampos do endereço sejam obrigatórios no formulário de inscrição
+
+## [7.6.51] - 2026-02-26
+### Melhorias
+- Adiciona possibilidade de filtro por arquivo na api
+
+## [7.6.50] - 2026-02-25
+### Correções
+- Corrige a remoção de avaliações quando um avaliador é excluído de uma comissão, afetando apenas a comissão correta.
+
+## [7.6.49] - 2026-02-24
+### Correções
+- Corrige a aplicação de resultados da avaliações por pontuação e classificação
+- Corrige a exibição do valor da coluna "Bônus por pontuação aplicadas a inscrição" na tabela de inscrições
+
+## [7.6.48] - 2026-02-23
+### Correções
+- Corrige exibição de indicação do campo obrigatório de país
+
+## [7.6.47] - 2026-02-22
+### Correções
+- Corrige os campos visíveis para o avaçliador para nao ignorar campos com sosmente uam fase de coleta de dados
+
+## [7.6.46] - 2026-02-19
+### Melhorias
+- Aplica melhorias no processo de envio de denúncia e contato, permitindo definir uma lista configurável de destinatários para o envio de e-mails
+
+## [7.6.45] - 2026-02-12
+### Correções
+- Corrige falha que impedia o carregamento correto de alguns avaliadores na tela das listas de inclusão e exclusão.
+
+## [7.6.44] - 2026-02-11
+### Melhorias
+- Melhora desempenho do mc-update de noralização da coluna valuers_exceptions_list 
+
+## [7.6.43] - 2026-02-11
+### Correção
+- Implementa mc-update para normalizar a coluna valuers_exceptions_list das inscrições
+
+## [7.6.42] - 2026-02-09
+### Correções
+- Corrige exibição do botão de "Editar informações enviadas" na tela de acompanhamento
+
+## Melhorias
+- Adiciona novo hook no componente de configuração de edição de inscrição
+
+## [7.6.41] - 2026-02-06
+### Correções
+- Implementação de verificações para campos editáveis da inscrição
+
+## Melhorias
+- Adiciona novo hook no componente de suporte
+
+## [7.6.40] - 2026-02-04
+### Correções
+- Exibe indicador de campo obrigatório no campo País do formulário de endereço
+- Corrige preenchimento do campo de país internacional na edição de agente
+
+## [7.6.39] - 2026-01-29
+### Correções
+- Implementa pase exclusivo para o Spotify que identifique todas as variações de URL's disponíveis
+
+## [7.6.38] - 2026-01-27
+### Melhorias
+- Adiciona descrição de imagem nos banners da home
+
+## [7.6.37] - 2026-01-27
+### Correções
+- Corrige erro na persistência dos termos de usop no banco de dados
+
+## [7.6.36] - 2026-01-23
+### Correção
+- Corrige warnings no carregamento do componente opportunity-appeal-phase-config
+- Ajusta getter Opportunity.phases para que devolva os objetos da fase de recurso corretamente
+
+## [7.6.35] - 2026-01-22
+### Melhorias
+- Separa os banners da home em template parts, facilitando o gerenciamento e a manipulação dos banners via hooks
+
+## [7.6.34] - 2026-01-19
+### Correção
+- Corrige erro que impedia o uso do plano de metas
+
+## [7.6.33] - 2026-01-16
+### Correções
+- Corrige bug visual na remoção de administradores de entidades, onde ao excluir um administrador era removido visualmente outro da lista
+
+## [7.6.32] - 2026-01-15
+### Correções 
+- Ajusta para que seja possivel solicitar recurso em todos os status de inscrição na fase de recurso
+
+## [7.6.31] - 2026-01-09
+### Correções
+- Ajusta o redirecionamento para usuários com perfil incompleto ou com erro, aplicando o magicGetter na validação dos erros do agente
+- Corrige a busca de dados no método getDataFromApi() do componente mc-entity, que falhava quando havia o parâmetro @keywords
+
+## [7.6.30] - 2026-01-06
+### Melhorias
+- Implementa forma de exibir todas as taxonomias obrigatórias no modal de criação de agente
+
+## [7.6.29] - 2026-01-05
+### Correções
+- Corrige copia de áreas de interesse ao criar um modelo de oportunidade
+
+## [7.6.28] - 2025-12-26
+### Correções
+- Corrige filtro de usuários na gestão de usuários
+
+## [7.6.27] - 2025-12-19
+### Correções
+- Corrige exibição do campo de endereço no formulário de inscrição
+- Corrige salvamento do CEP no campo de endereço no formulário de inscrição
+
+## [7.6.26] - 2025-12-10
+### Correções
+- Corrige permissão de edição de campos bloqueados no formulário de inscrição
+- Adiciona todos os campos da lista de pessoas na ficha de inscrição e na exportação da lista de inscrição
+- Corrige seleção de campos na API
+- Remove codigo que insere o sergmento cultural da tabela de agentes
+- Ajusta verificação de permissões para permitir que gestores da oportunidade visualizem todos os campos do formulário de inscrição, mesmo sem serem administradores do sistema
+- Corrige erro que impedia a exibição do botão de editar campos do formulário quando liberado período de edição para o usuário
+
+## [7.6.25] - 2025-11-27
+### Melhorias
+- Implementa validação dos campos no momento do salvamento de entidades 
+- Melhoria na legenda da galeria de imagens
+
+### Correções
+- Correção nos testes
+
+## [7.6.24] - 2025-11-14
+### Melhorias
+- Redireciona usuario para o perfil quando o mesmo esta em rascunho ou com dados obrigatórios não preechidos
+- Implementa novos hooks na edit de espaço e no componente entity-field
+
+### Correções
+- Corrige warnigs no navegador devido a problemas com o componente entity-field
+- Implementa verificações para evitar warnings indesejados referente ao componente de localização
+- Ajusta ApiQuery para evitar que _addFilterByMetadata crie JOIN's duplicados
+- Corrige função replaces da classe i
+- Corrige label do campo nome do modal
+- Ajusta a verificação de exibição do tipo no modal de criação de agente, garantindo o funcionamento correto mesmo quando houver replacements
+
+## [7.6.23] - 2025-10-31
+### Melhorias e correções não funcionais
+- Implementa novos hooks na edit dos agentes
+
+### Correções
+- Corrige erro que ocorria ao ordenar resultados com campos string vazios convertidos para FLOAT no ApiQuery
+
+## [7.6.22] - 2025-10-28
+### Correções
+- Corrige criação de avaliação na rota de nova avaliação
+
+### Melhorias e correções não funcionais
+- Corrige permissão na propagação do score e do eligible entre as fases da inscrição
+- Reformações de código para melhorar a leitura
+
+## [7.6.21] - 2025-10-24
+### Correções
+- Corrige listagem de avaliações da fase de recurso
+
+
+## [7.6.20] - 2025-10-22
+### Correções
+- Corrige filtro de ordenamento na lista de avaliações "mais recentes primeiro" e "mais antigas primeiro" pela ordem de envio da inscrição
+- Corrige criação de avaliação quando não é informado o user na url da requisição, criando para o usuário autenticado
+
+### Melhorias
+- Template part para os créditos do footer
+
+## [7.6.19] - 2025-10-20
+### Correções
+- Corrige salvamento de avaliação do método de avaliação qualificação documental
+- Corrige salvamento de avaliação por usuários admins
+
+## [7.6.18] - 2025-10-16
+### Correções
+- Corrige remoção de fase de avaliação quando a próxima fase for a última fase e a fase atual não for uma fase de coleta de dados
+
+## [7.6.17] - 2025-10-16
+### Correções
+- Corrige verificação do header que força o salvamento das requisições PATCH que contenham erro de validação
+
+## [7.6.16] - 2025-10-15
+### Correções
+- Corrige funcionamento dos campos somente leitura do módulo de suporte
+
+## [7.6.15] - 2025-10-15
+### Melhorias
+- Ajuste na visualização dos status das avaliações do avaliador para que seja exibido sempre que houver avaliações, mesmo que não tenham filtros configurados
+- Ajuste na distribuição para que distribua também as inscrições já avaliadas quando houver configurações na lista de inclusão de avaliadores.
+
+## [7.6.13] - 2025-10-14
+### Correções
+- Ajuste da exibição de acessibilidade na lista de espaços
+- Ajustes de filtros de categoria, faixa e tipo de proponente no suporte
+- Ajuste da visibilidade dos campos do formulário de inscrição condicionado a pergunta "Vai concorrer por cotas"?
+- Corrige a consolidação de resultado da avaliação do tipo habilitação documental
+- Corrige exibição da data da inscrição na tela de avaliação
+- Corrige criação de espaço
+- Evita quebra no getSummary da fase de avaliação
+
+### Melhorias não funcionais
+-- Novos hooks para manipulação na página de edição dos espaços
+
+## [7.6.12] - 2025-10-08
+### Correções
+- Ajuste a estilização do campo pessoa com deficiência
+- Padroniza labels dos campos da página de edição de agente individual
+- Ajuste de estilização na tela de aceitação de termos de uso e política de privacidade
+- Corrige destinatário dos emails de início de inscrições quando o agente não tem o email privado definido
+- Evita que entidades em rascunho e lixeira sejam exportados nas planilhas
+
+### Melhorias
+- Adiciona funcionalidade de remoção do supra espaço
+
+### Melhorias não funcionais
+- Novo hook para manipulação do título da página
+- Novo hook para manipulação do tipo de requisição do salvamento das entidades, que por padrão é PATCH, possibilitando definir para PUT
+- Viabiliza, na interface, mensagem de erro para o campo de upload de avatar das entidades
+
+## [7.6.11] - 2025-10-07
+### Correções
+- Corrige erro na avaliação de qualificação documental, que exigia uma opção para desabilitação mesmo quando não existia opções configuradas
+- Corrige erro que impedia o carregamento da inscrição, quando não existia step configurado em algum campo
+- Ajusta para que o script de cotas não quebre quando não existe configurações de cotas definidas ou se as configurações  estão incompletas
+- Corrige filtros da tabela de agentes individuais
+- Corrige funcionalidade de limpar filtros da tabela de agentes
+- Corrige exibição das tabelas de agentes e agentes individuais
+
+## [7.6.10] - 2025-10-02
+### Correções
+- Corrige conflito entre a criação de inscrição e a pré visualização de formulários
+- Faz ajustes para evitar que fique arquivos duplicados na inscrição
+- Corrige db-update que ajusta o metadado pessoa com deficiência
+
+### Melhorias
+- Implementa botão de alteração de senha para ser usados em providers externos Ex.: Authentik
+- Implementa método que melhora a auto aplicação de resultados das avaliações melhorando a usabilidade da funcionalidade
+
+## [7.6.9] - 2025-09-26
+- Corrige criação de oportunidade de fluxo contínuo
+- Corrige permissão de bloquear uma entidade para edição quando a permissão de modificar foi dada por um role
+- Evita que campos @ condicionados tentem apagar a informação da entidade relacionada
+- Corrige salvamento de formulário de edição de campos de inscrição 
+
+## [7.6.8] - 2025-09-25
+### Correções
+- Corrige exibição do link da inscrição na exportação da planilhas de inscritos
+- Corrige exibição dos campos do tipo "Lista de Pessoas" na exportação da planilha de inscritos
+- Corrige erro que exibia campos indevidos para o admnistrador na ficha de inscrição
+- Corrige exibição do link da inscrição na tabela e planilha de inscritos
+- Corrige ordenação dos campos do formulário de avaliação
+- Corrige layout da tela de acompanhamento de inscrição no mobile
+- Corrige salvamento de formulário de edição de campos de inscrição quando há campos @ condicionados
+
+## [7.6.7] - 2025-09-19
+### Correções
+- Implementa db-updates para ajustar as avaliações, garantindo compatibilidade com a nova estrutura de comissões de avaliação
+
+## [7.6.6] - 2025-09-17
+### Correções
+- Corrige condição de exibição do botão de recurso para não aparecer quando o período de recurso não estiver aberto
+- Corrige a exibição dos campos condicionais do formulário, exibindo-os corretamente quando existe condicionalidade por tipo de proponente
+- Corrige exibição da pre visualização do formulário de inscrição
+- Corrige links para arquivo compactado dos anexos dos formulários de inscrição
+
+### Melhorias
+- Exibe hora de abertura e fechamento da fase de recurso nas sanfonas de configuração de fases
+
+### Outros
+- Script de limpeza dos arquivos compactados com os anexos dos formulários. Para executar o script é necesário definir a variável de ambiente `CLEAN_ZIPARCHIVE=1`
+- Mudança no entrypoint do Docker, fazendo os comandos de mudança de permissão das pastas não serem recursivos, diminuindo o tempo para subir o ambiente
+
+## [7.6.5] - 2025-09-16
+### Corrções
+- Corrige o endpoint ALL_error para capturar corretamente as exceções
+- Corrige erro no método EvaluationMethodContinuous que impedia o avaliador de encerrar o CHAT
+- Corrige a sintaxe HTML do componente de exibição dos detalhes da avaliação documental
+- Oculta o checkbox que ativa ou desativa a exibição de parecer na avaliação contínua
+- Corrige a exibição do botão de detalhamento na tela de acompanhamento da inscrição
+- Corrige a aplicação dos resultados da avaliação nos casos de avaliação documental
+- Corrige a exibição da data de publicação de resultados nos steps de configuração das fases da oportunidade
+- Impede que os pareceres sejam carregados no front-end quando não estiver permitido exibi-los
+- Corrige exibição de resultados da inscrição para mostra apenas quando a fase estiver publicada ou, em fases de recurso, tambem se o chat estiver ativo para múltiplas respostas
+- Corrige o balanceamento da distribuição de avaliações quando já existem avaliações com status maior que 1 (Iniciadas)
+- Corrige execuções de tarefas em segundo plano para evitar quebra caso a(s) entidade(s) vinculada(s) ao job não exista(m) mais
+
+### Melhorias
+- Adicionado aviso que explica que, ao ativar o chat, o detalhamento da avaliação também ficará visível mesmo sem publicação da fase
+- Implementa o método shouldDisplayEvaluationResults para verificar se uma inscrição está apta ou não a exibir os resultados da avaliação
+- Diminui a frequência da verificação do status da distribuição de avaliações no intervalo que nao esta distribuindo
+
+## [7.6.4] - 2025-09-09
+### Correções
+- Implementa mc-update para normalização das comunidades Tradicionais 
+- Corrige o método refreshed das entidades
+- Corrige componente entity-activity-card que quebrava pela falta do use da classe de internacionalização
+- Corrige layout da página de busca de eventos
+- Botão de solicitar recurso em fases avançadas do edital
+- Corrige exibição do campo de estados na estrutura de endereço internacional
+- Corrige listagem de avaliações da fase de recuros
+- Corrige exibição do status na teela de acompanhamento
+
+### Melhorias e correções não funcionais
+- Flag para desabilitar a atualização automática do update_timestamp das entidades
+
+## [7.6.3] - 2025-09-04
+### Correções
+- Corrige distribuição das comissões quando há avaliadores repetidos em comissões diferentes que tenham filtro configurados
+- Corrige resumo das avaliações dos avaliadores dentro das comissões, para exibir somente as avaliações da comissão
+- Corrige alguns warnings
+
+## [7.6.2] - 2025-08-30
+### Correções
+- Corrige ordenação por classificação quando não há faixas no edital
+
+## [7.6.1] - 2025-08-29
+### Melhorias
+- Muda o fetch mode da relação __metada para EAGER
+- Aplicação de função `text` em textos do rodapé, permitindo a manipulação e personalização por meio de temas e plugins.
+- Tradução para o inglês (wip)
+- Verificação da existência de um metadado com a mesma chave antes de salvar o metadado
+- Ajustar a label do campo "E-mail pessoal" para "E-mail privado" nos agentes individuais e coletivos.
+
+### Correções
+- Impede que a funcionalidade de duplicar oportunidade duplique a commisão de avaliação do edital de origem
+- Impede que a funcionalidade de duplicação de oportunidade mantenha os selos relacionados do edital de origem no edital copiado
+- Impede que a funcionalidade de duplicação de oportunidade mantenha os agentes relacionados do edital de origem no edital copiado
+- Impede que a data de criação permaneca igual ao edital original na funcionalidade de duplicar oportunidade
+- Impede que a funcionalidade de duplicação de oportunidade mantenha o mesmo dono do edital de origem no edital copiado
+
+### Correções
+- Corrige componente `opportunity-owner-type` que estava quebrada com as novas traduções do ES e EN
+
+## [7.6.0] - 2025-08-20
+### Novas Funcionalidades
+- Novo **módulo de recursos**[(1)](#hl-funpar) que permite que o gestor configure fases de recurso nos editais/oportunidades, possibilitando que proponentes contestem o resultado de fases específicas. É possível habilitar um formulário personalizado para a solicitação de recurso e definir uma comissão avaliadora responsável por analisar essas solicitações, garantindo mais transparência e formalização no processo dentro da plataforma.
+- Módulo **plano de metas**[(2)](#ufpr) que permite ao gestor configurar um formulário, disponível já na fase de inscrição, para que os proponentes descrevam quais metas pretendem alcançar, prazos de execução e as entregas previstas para cada meta, garantindo maior clareza e detalhamento dos objetivos e compromissos dos projetos que estão submetendo.
+- **Modelos de oportunidades**[(2)](#ufpr) - Funcionalidade que permite o salvamento de oportunidades já configuradas como modelos que podem ser utilizados para a criação de oportunidades já pré-configuradas.
+- **Duplicação de oportunidades**[(2)](#ufpr) - Funcionalidade que permite a criar uma cópia de uma outra oportunidade já inteiramente configurada.
+- Módulo de **monitoramento e prestação de contas**[(1)](#hl-funpar) que permite ao gestor configurar fases de envio de informações para acompanhar o andamento das metas e entregas declaradas na inscrição (_plano de metas_) pelos proponentes contemplados. A última dessas fases é a prestação final de informações, ou prestação de contas, de preenchimento obrigatório para todos os contemplados. (1)
+- **Documentos oficiais**[(1)](#hl-funpar) - melhoria na interface de bloqueio de campos por selos verificadores de documento, como por exemplo um selo _GOV.br_ que valide os campos _CPF_, _Nome Completo_, _Telefone Privado_, exibindo ao lado do campo o ícone do selo e a data da validação do campo. (1)
+- **Editais de fluxo contínuo**[(3)](#hl-scdc), onde as inscrições podem ficar abertas indefinidamente e os proponentes recebem os resultados conforme avançam nas fases (como análise técnica ou avaliação documental), sem depender de datas pré-fixadas para divulgação coletiva do resultado — ideal para programas de fomento contínuo ou ocupação de espaços culturais.
+- **Certificação automática de proponentes**[(3)](#hl-scdc) por meio de selos vinculados às fases dos editais, que são atribuídos conforme o proponente avança no processo — por exemplo, ao ser aprovado na análise documental, recebe um selo de "CPF verificado", e ao ser contemplado na fase final, ganha o selo "Fomento 2025".
+- **Autoaplicação das avaliações**[(3)](#hl-scdc) - Quando todos os avaliadores de uma inscrição finalizam suas avaliações, o sistema processa automaticamente o resultado das avaliações e atualiza o status da inscrição dispensando qualquer ação manual pela equipe gestora.
+- **Formulários de inscrição por etapas**[(3)](#hl-scdc) - agora é possível dividir o formulário de inscrição em etapas, organizando os campos em blocos sequenciais. A tela de inscrição foi redesenhada para essa nova estrutura, tornando o preenchimento mais claro e fluido para os proponentes.
+- **Nova interface de configuração das comissões de avaliação**[(3)](#hl-scdc) que permite maior flexibilidade e controle na gestão das comissões de avaliação dos editais.
+  - **Múltiplas comissões**: Agora é possível criar diversas comissões em um mesmo edital, cada uma com critérios próprios de distribuição das inscrições.
+  - **Filtros no nível da comissão**: Os filtros (antes aplicados individualmente por avaliador) agora podem ser definidos na comissão, usando qualquer campo de seleção do formulário, além de categoria, tipo de proponente e faixa. (Continua possível aplicar subfiltros específicos por avaliador dentro da comissão.)
+  - **Limite de avaliadores por inscrição**: Permite definir quantos avaliadores de uma comissão analisarão cada inscrição, facilitando editais com grande volume.
+  - **Comissão de voto de minerva**: Nova instância que recebe inscrições com avaliações divergentes para desempate.
+  - **Maior transparência no processo de distribuição**: Interface que exibe o progresso da distribuição das inscrições entre os avaliadores, especialmente útil em grandes editais.
+- **Configuração avançada de status das inscrições**[(4)](#hl-secultpe) - agora é possível configurar quais status de inscrições estarão ativos em cada fase do edital, além de customizar seus nomes para melhor se adequar a cada organização ou situação. 
+- **Internacionalização dos endereços**[(5)](#hl-ibercultura) - para atender os distintos formatos de coleta de endereços existentes. Possibilidade de criação de componentes específicos para cada país.
+
+### Melhorias e correções não funcionais
 - Novos tipos de metadados:
   - **object** - serializa / deserializa um json fazendo um cast para (object)
   - **array** - serializa / deserializa um json fazendo um cast para (array)
   - **entity** - possibilita a vinculação de entidade em metadados
-- parâmetro para substituições na função text do javascript
-- refatoração da distribuição das avaliações para não mais dependerem do cache de permissão
-  
+- Parâmetro para substituições na função text do javascript;
+- Refatoração da distribuição das avaliações para não dependerem mais do cache de permissão;
+- Nova estrutura para os testes automatizados 
+- Corrige função de tradução para que faça a leitura dos arquivos de tradução dos plugins
+- Operador IN para metadados de seleção múltipla
+
+### Créditos
+<a name="hl-funpar"></a>
+1. <small>Funcionalidade desenvolvida pela hacklab/ por meio do contrato com a FUNPAR, referente à execução do TED Mapas MinC</small>
+<a name="ufpr"></a>
+2. <small>Funcionalidade desenvolvida pela UFPR, por meio TED Mapas MinC com colaboração da hacklab/</small>
+<a name="hl-scdc"></a>
+3. <small>Funcionalidade desenvolvida pela hacklab/ por meio de cooperação com a SCDC</small>
+<a name="hl-secultpe"></a>
+4. <small>Funcionalidade desenvolvida pela hacklab/ por meio do contrato com a SECULT/PE</small>
+<a name="hl-ibercultura"></a>
+5. <small>Funcionalidade desenvolvida pela hacklab/ por meio do contrato com o programa IberCultura Viva</small>
+
+## [7.5.68] - 2025-10-07
+### Correções
+- Corrige template de e-mail de aviso de inscrição selecionada para exibir o number da inscrição corretamente
+
+## [7.5.67] - 2025-09-26
+### Correções
+- Corrige permissão para edição via role criado na página de funções de usuário
+
+## [7.5.66] - 2025-09-05
+### Correções
+- Corrige paginação de oportunidades
+
+## [7.5.65] - 2025-09-04
+### Correções
+- Corrige erro que exibia os campos para o avaliador mesmo quando estavam bloqueados após o envio da avaliação.
+
+## [7.5.64] - 2025-08-30
+### Correções
+- Corrige ordenação por classificação quando não há faixas no edital
+
+## [7.5.63] - 2025-08-29
+### Correções
+- Corrige erro no componente entity-field-datepicker que impedia deixar vazios os campos de datas não obrigatórias
+
+## [7.5.62] - 2025-08-28
+### Correções
+- Corrige exibição da lista de últimas planilhas exportadas no componente mc-export-spreadsheet
+
+## [7.5.61] - 2025-08-27
+### Correções
+- corrige exibição dos pareceres e detalhamentos para o proponente no método de avaliação documental
+
+## [7.5.60] - 2025-08-12
+### Correções
+- Ajusta para que seja recriado o cache da inscrição quando usuário acessa a mesma
+
+## [7.5.59] - 2025-08-08
+### Correções
+- Recria o cache de permissão do usuário no momento que ele acessa a entidade
+
+## [7.5.58] - 2025-08-05
+### Correções
+- Corrige exibição e validação de campos condicionais dependentes em múltiplos níveis
+- Corrige exibição das informações de campos condicionados na configuração dos anexos
+
+## [7.5.57] - 2025-08-04
+### Correções
+- Evita que a listagem de oportunidades quebre quando exista um erro em alguma coluna
+
+## [7.5.56] - 2025-08-01
+### Correções
+- Corrige erro que impedia o acesso à inscrição quando não havia campos liberados para o avaliador e o valor retornado era null
+- Corrige erro no cálculo da pontuação total na tela de avaliação.
+
+## [7.5.55] - 2025-07-14
+### Correções
+- Ajusta cenUserSend() na entidade registration, evitando falso bloqueio causado por erros anteriores no formulário
+
+## [7.5.54] - 2025-07-10
+### Correções
+- Ajusta o método appendMetadata na classe ApiQuery para repassar corretamente os parâmetros de definição durante o processo de unserialize
+
+### Melhorias
+- Ajusta unserialize dos campos de tipo agent-owner-field, agent-collective-field e space-field para melhorar a performace
+
+## [7.5.53] - 2025-06-02
+### Correções
+- Ajusta verirficação de permissão para baixar arquivos ZIP das inscrições
+
+## [7.5.52] - 2025-05-29
+### Correções
+- Corrige a validação do fluxo de envio da inscrição para considerar o modo de edição de inscrição no componente registration-action
+
+## [7.5.51] - 2025-05-29
+### Melhorias
+- Implementa endpoint que gera o arquivo ZIP dos anexos da inscrição em tempo real e realiza o envio direto para download
+- Ajusta o componente registration-tab para requisitar os anexos da inscrição via novo endpoint createZipFiles()
+- Adiciona link para download do arquivo ZIP com os anexos da inscrição na planilha de inscritos
+
+### Melhorias não funcionais
+- Remove a geração do arquivo ZIP com os anexos do fluxo de envio da inscrição
+- Implementa o método getMimeType() na classe Utils, responsável por retornar o MIME type de um arquivo.
+- Utiliza o método getMimeType() para obter o MIME type dos arquivos durante o processo de upload.
+- Implementa configuração que permite definir quais tipos de MIME devem ser bloqueados.
+- Atualiza a validação de MIME types para utilizar a lista not_allowed_mime_types definida nas configurações
+
+### Correções
+- Ajusta o fluxo de upload para exibir corretamente os erros de validação retornados
+- Corrige a exibição indevida de mensagem no formulário de inscrição com prazo final expirado
+- Ajusta tradução dos termos Sim e Não do campo pessoa idosa  no componente agent-data-1
+
+## [7.5.50] - 2025-05-23
+### Correções
+- Ajusta planilha de inscritos, para conter dados das cotas no momento da exportação
+
+## [7.5.49] - 2025-05-23
+### Correções
+- Remove componente renew-lock da página de edição da inscrição
+
+## [7.5.48] - 2025-05-22
+### Melhorias
+- Implementa classe responsável por fazer o parse dos dados enviados para exportação de planilhas, garantindo acesso em profundidade aos objetos.
+- Aplica a nova classe de parse de dados para acessar corretamente os objetos de inscrição durante a exportação de planilhas de inscritos.
+
+### Correções
+- Impede a exibição dos botões de ação do formulário de inscrição para o proponente após o encerramento do prazo de edição.
+- Ajusta a permissão canUserModify() da inscrição para impedir alterações no formulário após o encerramento do prazo de edição.
+
+## [7.5.47] - 2025-05-21
+### Correções
+- Corrige erro que impedia a exibição do botão "Carregar mais" na lista de inscritos  em editais com múltiplas fases
+- Corrige erro na permissão can(Registration.view) no módulo de suporte
+
+## [7.5.46] - 2025-05-20
+### Melhorias
+- Melhora a interface da timeline de acompanhamento da inscrição para exibir a data de encerramento do prazo de edição, quando houver campos liberados para edição para o usuário.
+- Implementa endpoint para atualizar o resumo das avaliações dos avaliadores na configuração de avaliação.
+
+### Coreeções
+- Garante que administradores do edital possam conceder permissão de edição em campos das inscrições.
+
+## [7.5.45] - 2025-05-19
+### Correções
+- Evita que arquivos que não tenham sido corretamente salvos no sistema de arquivo sejam salvos no banco de dados
+- Corrige definição do Controller::getData para requisições não GET
+
+## [7.5.44] - 2025-05-16
+### Correção
+- Corrige erro que impedia a exibição das fases na aba de suporte da oportunidade para o agente de suporte.
+- Corrige erro que impedia a listagem de inscrições na aba de suporte quando o agente estava vinculado como suporte em uma fase de coleta de dados posterior à fase inicial.
+
+## [7.5.43] - 2025-05-16
+### Correções
+- Corrige momento em que o componente opportunity-claim-form é importado para evitar conflitos
+
+### Melhorias nao funcionais
+- Na gestão de usuários, nos card's que listam os agentes, insere ícone que identifica quem é o agente principal
+
+## [7.5.42] - 2025-05-13
+### Melhorias não funcionais
+- Implementa método no Entity.php para devolver as permissões do usuário sobre a entidade
+- Melhora texto do botão da função de edição de inscrição que da acesso ao formulário
+- Melhora mensagens na ficha de inscrições para casos de inscrições ainda nao enviadas
+
+### Correções
+- Corrige problema que impedia o botão de editar a inscrição de ser exibido fora da primeira fase
+- Ajusta permissão para que não permita o usuário enviar a inscrição fora do prazo mesmo tendo enviado anteriormente dentro do prazo
+
+## [7.5.41] - 2025-04-23
+### Melhorias
+- Atualiza arquivos de tradução para Espanhol
+
+### Correções 
+- Corrige erro que disparava um wraning no método que atualiza o resumo das avaliações
+
+## [7.5.40] - 2025-04-10
+### Correções 
+- Remove bloqueio de modificação de avaliações quando a inscrição esta com status diferente de pendente
+- Corrige erro que impedia a listagem das tabelas de inscrições e avaliações
+
+## [7.5.39] - 2025-04-09
+### Melhorias não funcionais
+- nova propriedade no componente home-map possibilitando que seja configurado para exibir somente espaços ou somente agentes
+
+## [7.5.37] - 2025-04-07
+### Correções
+- Remove filtro de selos no método que limpa os filtros na tela de busca de espaços
+- Evita que avaliador consiga modificar uma inscrição que não esta com status pendente
+- Corrige erro que passava a inscrição para pendente quando se usava a opção viability na avaliação tecnica
+
+## [7.5.36] - 2025-04-04
+### Melhorias não funcionais
+- Implementa novos hooks na tela de busca de espaços para possibilitar a criação de novo filtros apartir de plugins e temas
+- Implementa novos hooks no controller Search para possibilitar a interceptação e manuseio das p pseudo-querys de busca 
+
+## [7.5.35] - 2025-04-02
+### Melhorias
+- Deixa o card da commisão de avaliação nas configurações com mais informações para ficar evitende qual agente está como avaliador
+
+### Melhorias nao funcionais
+- Implementa slot no componente select-entity para facilitar a amnipulação das opções exibidas
+
+### Correções
+- Evita que seja possivel inserir agentes que nao sejam agentes de perfil como avaliador
+- Implementa mc-update que garante que todos os avaliadores sejam sempre os agentes principais das contas
+
+## [7.5.34] - 2025-04-02
+### Correções
+- Corrige exibição de eventos no mapa da busca de eventos
+
+## [7.5.33] - 2025-03-31
+### Correções
+- Corrige a exportação de planilhas para tratar os valores dos critérios da avaliação técnica como texto, assegurando a exibição correta de valores zerados
+- Resolve um problema que impedia o carregamento da lista de inscritos quando a opção `considerQuotasInGeneralList` não estava configurada
+
+## [7.5.32] - 2025-03-24
+### Correções
+- Insere na lista de ENUM's a permissão applySeal
+
+## [7.5.31] - 2025-03-20
+### Melhorias
+- Melhorias de performance no processamento de permission cache
+- Melhorias de performance na view evaluations e no endpoint findEvaluations
+
+## [7.5.30] - 2025-03-20
+### Correção
+- Corrige exibição dos campos de dados bancários e data de nacimento na visualização da inscrição
+
+### Melhorias
+- Aplica lock na sincronização de inscrição para impedir duplicidade de registros
+
+## [7.5.29] - 2025-03-20
+### Melhorias
+- Faz com que o componente select-entity exiba as entidades por ordem alfabética
+
+## [7.5.28] - 2025-03-14
+### Correção
+- Corrige slug do método de avaliação habilitaçào documental
+- Corrige erro que impedia a paginação das inscrições com o botão carregar mais na lista de inscritos e suporte
+- Ajusta a permissão canUserSent() da inscrição para permitir que o proponente envie a inscrição após o prazo, caso já a tenha enviado anteriormente dentro do período vigente.
+
+## [7.5.27] - 2025-02-27
+### Correção
+- Corrige a exibição do status da entidade no componente de tabelas 'entity-table'
+- Executa register do thema na execução dos JOB's quando o ambiente conta com subisites
+- Corrige a exibição do tipo da entidade no componente de tabelas 'entity-tabele'
+- Corrige a exibição do campo 'Localização pública' no componente de tabelas 'entity-table'
+
+### Melhorias
+- Faz com que o componente space-table retorne todos os dados que estão devidamente registrados na entidade espaços
+
+## [7.5.26] - 2025-02-25
+### Correção
+- Ajusta o embedTools.js para enviar valores de objetos já limpos, removendo $$hashKey do Angular
+- Corrige erro nas verificações de campos condicionais do formulario de inscrição
+
+## [7.5.25] - 2025-02-24
+### Correções
+- Corrige erro que impedia a exibição de campos do formulario na tabela de inscritos
+
+## [7.5.24] - 2025-02-21
+### Correções
+- Corrige erro ao exportar as taxonomias na planilha de agentes
+
+#### Melhorias
+- Insere colunas das taxonomias Segmento e Função na tabela de agentes
+
+## [7.5.23] - 2025-02-20
+#### Correções
+- Corrige problema erro ao carregar a tabela de inscrição
+
+#### Melhorias Não funcionais
+- Implementa cache no retorno da listagemd e inscrições elegíveis a cotas
+
+## [7.5.22] - 2025-02-14
+#### Melhorias
+- Ajusta a tabela de agentes nas telas de busca para exibir todos os campos, respeitando a privacidade e as permissões do usuário
+
+## [7.5.21] - 2025-02-12
+#### Correções
+- Evita que aconteça erro na exportação de planilhas com valores que começam com o caractere '='
+
+## [7.5.20] - 2025-02-07
+#### Correções
+- Limpeza do cache de usuário antigo na mudança de propriedade em uma entidade
+
+## [7.5.19] - 2025-02-03
+#### Melhorias
+- Possibilita condicionar campos com a pergunta "Vai concorrer às cotas?"
+
 ## [7.5.18] - 2025-01-29
 #### Correções
 - Corrige contagem de entidades na api, que ficava distorcida dependendo dos filtros

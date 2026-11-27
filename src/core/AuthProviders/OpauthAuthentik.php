@@ -3,12 +3,33 @@ namespace MapasCulturais\AuthProviders;
 use MapasCulturais\App;
 use MapasCulturais\Entities;
 
-
+/**
+ * Provedor de autenticação Opauth para Authentik
+ * 
+ * Implementa autenticação via Opauth para o provedor Authentik
+ * 
+ * @package MapasCulturais\AuthProviders
+ */
 class OpauthAuthentik extends \MapasCulturais\AuthProvider{
+    /**
+     * Instância do Opauth
+     * @var \Opauth
+     */
     protected $opauth;
 
+    /**
+     * URL do primeiro login
+     * @var string|null
+     */
     protected $_firstLloginUrl = null;
 
+    /**
+     * Inicializa o provedor de autenticação
+     * 
+     * Configura as rotas e hooks necessários para autenticação via Authentik
+     * 
+     * @return void
+     */
     protected function _init() {
         $app = App::i();
         //eval(\psy\sh());
@@ -21,6 +42,7 @@ class OpauthAuthentik extends \MapasCulturais\AuthProvider{
             'login_url' => '',
             'path' => preg_replace('#^https?\:\/\/[^\/]*(/.*)#', '$1', $url),
             'logout_url' => $app->createUrl('site','index'),
+            'change_password_url' => null
         ], $this->_config);
         
         
@@ -33,7 +55,9 @@ class OpauthAuthentik extends \MapasCulturais\AuthProvider{
             'security_timeout' => $config['timeout'],
             'host' => preg_replace('#^(https?\:\/\/[^\/]*)/.*#', '$1', $url),
             'path' => $config['path'],
-            'callback_url' => $app->createUrl('auth','response')
+            'callback_url' => $app->createUrl('auth','response'),
+            // Keep auth payload in session — avoid unserialize() of attacker-controlled GET/POST.
+            'callback_transport' => 'session',
         ];
         
         $metadata = [
@@ -69,19 +93,35 @@ class OpauthAuthentik extends \MapasCulturais\AuthProvider{
             }
         });
         
-        if($config['logout_url']){
+        if($config['logout_url'] && php_sapi_name() != "cli"){
             $app->hook('auth.logout:after', function() use($app, $config){
                 $app->redirect($config['logout_url']);
             });
         }
+
+        // Implementa botão para alterar a senha no paineld e usuario
+        $app->hook('template(panel.<<my-account|user-detail>>.user-mail):end ', function () use ($app) {
+            /** @var \MapasCulturais\Theme $this */
+            if (isset($app->config['auth.config']) && isset($app->config['auth.config']['change_password_url']) && $app->config['auth.config']['change_password_url']) {
+                $this->part('change_password_other_providers', [
+                    'change_password_url' => $app->config['auth.config']['change_password_url']
+                ]);
+            }
+        });
         
     }
+    
+    /**
+     * Limpa a sessão do usuário
+     * 
+     * @return void
+     */
     public function _cleanUserSession() {
         unset($_SESSION['opauth']);
     }
     
     /**
-     * Returns the Opauth authentication response or null if the user not tried to authenticate
+     * Retorna a resposta de autenticação do Opauth ou null se o usuário não tentou autenticar
      * @return array|null
      */
     protected function _getResponse(){
@@ -99,10 +139,10 @@ class OpauthAuthentik extends \MapasCulturais\AuthProvider{
                 }
                 break;
             case 'post':
-                $response = unserialize(base64_decode( $_POST['opauth'] ));
+                $response = unserialize(base64_decode($_POST['opauth'] ?? ''), ['allowed_classes' => false]);
                 break;
             case 'get':
-                $response = unserialize(base64_decode( $_GET['opauth'] ));
+                $response = unserialize(base64_decode($_GET['opauth'] ?? ''), ['allowed_classes' => false]);
                 break;
             default:
                 $app->log->error('Opauth Error: Unsupported callback_transport.');
@@ -111,13 +151,23 @@ class OpauthAuthentik extends \MapasCulturais\AuthProvider{
         return $response;
     }
 
+    /**
+     * Interrompe a execução com código e mensagem de erro
+     * 
+     * @param int $code Código de erro
+     * @param string $msg Mensagem de erro
+     * @return void
+     */
     protected function halt($code, $msg) {
         die($msg);
     }
     
 
     /**
-     * Check if the Opauth response is valid. If it is valid, the user is authenticated.
+     * Verifica se a resposta do Opauth é válida
+     * 
+     * Se for válida, o usuário está autenticado
+     * 
      * @return boolean
      */
     protected function _validateResponse(){
@@ -149,6 +199,12 @@ class OpauthAuthentik extends \MapasCulturais\AuthProvider{
         }
         return $valid;
     }
+    
+    /**
+     * Obtém o usuário autenticado
+     * 
+     * @return \MapasCulturais\Entities\User|null
+     */
     public function _getAuthenticatedUser() {
         $user = null;
         if($this->_validateResponse()){
@@ -164,9 +220,11 @@ class OpauthAuthentik extends \MapasCulturais\AuthProvider{
             return null;
         }
     }
+    
     /**
-     * Process the Opauth authentication response and creates the user if it not exists
-     * @return boolean true if the response is valid or false if the response is not valid
+     * Processa a resposta de autenticação do Opauth e cria o usuário se não existir
+     * 
+     * @return boolean true se a resposta for válida ou false se não for válida
      */
     public function processResponse(){
         // se autenticou
@@ -189,6 +247,12 @@ class OpauthAuthentik extends \MapasCulturais\AuthProvider{
         }
     }
 
+    /**
+     * Cria um novo usuário a partir da resposta de autenticação
+     * 
+     * @param array $response Resposta de autenticação do Opauth
+     * @return \MapasCulturais\Entities\User
+     */
     protected function _createUser($response) {
         $app = App::i();
 

@@ -11,6 +11,7 @@ $this->import('
     evaluation-actions
     evaluation-documentary-datail
     mc-modal
+    mc-avatar
 ');
 ?>
 
@@ -33,7 +34,22 @@ $this->import('
             <h3>{{ formData.data[fieldId]?.label || '' }}</h3>
         </div>
         <input type="hidden" v-model="formData.data[fieldId].label" @change="setEvaluationData(fieldId)" />
+
+        <div v-if="hasSealInfo(fieldId)" class="field documentary-evaluation-form__verification documentary-evaluation-form__seal-alert" :class="sealAlertClass(getSealInfo(fieldId))">
+            <div class="documentary-evaluation-form__verification__seals-image">
+                <div v-for="seal in getSealInfo(fieldId)" :key="`${seal.sealRelationId || seal.sealId}-${seal.fieldName || fieldId}`">
+                    <mc-avatar :entity="seal" size="small" square></mc-avatar>
+                </div>
+            </div>
+
+            <div class="documentary-evaluation-form__seal-alert-content">
+                <h4 class="bold">{{ sealAlertTitle(getSealInfo(fieldId)) }}</h4>
+                <p v-html="sealAlertMessage(getSealInfo(fieldId))"></p>
+            </div>
+        </div>
+
         <div class="documentary-evaluation-form__fields field">
+            <p><?= i::__('Selecione se o dado informado no campo é válido ou não:') ?></p>
             <label>
                 <input type="radio" value="" v-model="formData.data[fieldId].evaluation" @change="setEvaluationData(fieldId, 'empty')" :disabled="!isEditable"/>
                 <?= i::__('Não avaliar') ?>

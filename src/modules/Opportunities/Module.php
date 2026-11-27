@@ -5,6 +5,7 @@ namespace Opportunities;
 use DateTime;
 use Exception;
 use MapasCulturais\App;
+use MapasCulturais\Controllers\Opportunity as ControllersOpportunity;
 use MapasCulturais\Entities\AgentRelation;
 use MapasCulturais\i;
 use MapasCulturais\Entities\Opportunity;
@@ -15,6 +16,9 @@ use MapasCulturais\Entities\RegistrationStep;
 use MapasCulturais\Entities\Agent;
 use MapasCulturais\Entities\EvaluationMethodConfigurationAgentRelation;
 use MapasCulturais\Entities\EvaluationMethodConfigurationMeta;
+use MapasCulturais\Entity;
+use MapasCulturais\Exceptions\PermissionDenied;
+use SealExemption\SealExemptionService;
 
 class Module extends \MapasCulturais\Module{
 
@@ -31,6 +35,34 @@ class Module extends \MapasCulturais\Module{
 
         $self = $this;
 
+        $evaluator_agent_search = false;
+
+        $app->hook('ApiQuery(agent).params', function (&$api_params) use (&$evaluator_agent_search) {
+            $evaluator_agent_search = !empty($api_params['_evaluatorSearch']);
+            unset($api_params['_evaluatorSearch']);
+        });
+
+        $app->hook('repo(agent).getIdsByKeywordDQL.where', function (&$where, $keyword, $alias) use (&$evaluator_agent_search) {
+            if (!$evaluator_agent_search) {
+                return;
+            }
+
+            $raw_keyword = trim(str_replace('%', '', $keyword));
+
+            if (preg_match('/^#(\d+)$/', $raw_keyword, $matches)) {
+                $where .= "\n OR e.id = " . (int) $matches[1];
+            }
+
+            if (str_contains($raw_keyword, '@')) {
+                $where .= "
+                    OR IDENTITY(e.user) IN (
+                        SELECT evaluation_committee_user.id
+                        FROM MapasCulturais\\Entities\\User evaluation_committee_user
+                        WHERE lower(evaluation_committee_user.email) LIKE lower(:{$alias})
+                    )";
+            }
+        });
+
         // Registro de Jobs
         $app->registerJobType(new Jobs\StartEvaluationPhase(Jobs\StartEvaluationPhase::SLUG));
         $app->registerJobType(new Jobs\StartDataCollectionPhase(Jobs\StartDataCollectionPhase::SLUG));
@@ -39,7 +71,107 @@ class Module extends \MapasCulturais\Module{
         $app->registerJobType(new Jobs\PublishResult(Jobs\PublishResult::SLUG));
         $app->registerJobType(new Jobs\UpdateSummaryCaches(Jobs\UpdateSummaryCaches::SLUG));
         $app->registerJobType(new Jobs\RedistributeCommitteeRegistrations(Jobs\RedistributeCommitteeRegistrations::SLUG));
-        $app->registerJobType(new Jobs\RefreshViewEvaluations(Jobs\RefreshViewEvaluations::SLUG));
+        $app->registerJobType(new Jobs\ImportFields(Jobs\ImportFields::SLUG));
+
+        $app->hook('request.finish', function($data, $status) use ($app) {
+            if ((int) $status !== 200) {
+                return;
+            }
+
+            if (!($data instanceof Registration)) {
+                return;
+            }
+
+            $postData = $this->postData ?? [];
+            if (!is_array($postData)) {
+                return;
+            }
+
+            $hasValuerChange = array_key_exists('valuersIncludeList', $postData) ||
+                               array_key_exists('valuersExcludeList', $postData) ||
+                               array_key_exists('valuers', $postData);
+            if (!$hasValuerChange) {
+                return;
+            }
+
+            $desiredValuers = (array) ($postData['valuers'] ?? []);
+
+            $registrationId = (int) $data->id;
+
+            $conn = $app->em->getConnection();
+
+            $row = $conn->fetchAssociative(
+                'SELECT valuers, valuers_exceptions_list FROM registration WHERE id = ?',
+                [$registrationId]
+            );
+            $valuers = $row ? (array) json_decode($row['valuers'], true) : [];
+            $exceptions = $row ? (array) json_decode($row['valuers_exceptions_list'], true) : [];
+
+            $storedIncludeList = array_map('intval', (array) ($exceptions['include'] ?? []));
+            $storedExcludeList = array_map('intval', (array) ($exceptions['exclude'] ?? []));
+
+            $includeList = array_key_exists('valuersIncludeList', $postData)
+                ? array_map('intval', (array) $postData['valuersIncludeList'])
+                : $storedIncludeList;
+            $excludeList = array_key_exists('valuersExcludeList', $postData)
+                ? array_map('intval', (array) $postData['valuersExcludeList'])
+                : $storedExcludeList;
+
+            $changed = false;
+
+            foreach ($excludeList as $userId) {
+                if (isset($valuers[$userId]) || isset($valuers[(string) $userId])) {
+                    unset($valuers[$userId], $valuers[(string) $userId]);
+                    $changed = true;
+                }
+            }
+
+            $desiredUserIds = array_map('intval', array_keys($desiredValuers));
+            $candidateUserIds = array_unique(array_merge($includeList, $desiredUserIds));
+
+            foreach ($candidateUserIds as $userId) {
+                if (in_array($userId, $excludeList, true)) {
+                    continue;
+                }
+
+                $group = $desiredValuers[$userId] ?? $desiredValuers[(string) $userId] ?? null;
+
+                if ($group) {
+                    $currentGroup = $valuers[$userId] ?? $valuers[(string) $userId] ?? null;
+                    if ($currentGroup !== $group) {
+                        unset($valuers[(string) $userId]);
+                        $valuers[$userId] = $group;
+                        $changed = true;
+                    }
+                }
+            }
+
+            // Remove avaliadores do banco que não estão mais em desiredValuers nem em includeList
+            foreach (array_keys($valuers) as $userId) {
+                $userIdInt = is_int($userId) ? $userId : (int) $userId;
+                $isInDesired = isset($desiredValuers[$userId]) || isset($desiredValuers[(string) $userId]);
+                $isInInclude = in_array($userIdInt, $includeList, true);
+
+                if (!$isInDesired && !$isInInclude) {
+                    unset($valuers[$userId]);
+                    $changed = true;
+                }
+            }
+
+            if ($changed) {
+                $conn->update(
+                    'registration',
+                    ['valuers' => json_encode((object) $valuers)],
+                    ['id' => $registrationId]
+                );
+
+                $app->em->clear();
+                $fresh = $app->repo('Registration')->find($registrationId);
+                if ($fresh) {
+                    $this->json($fresh, $status);
+                }
+            }
+        });
 
         $app->hook('mapas.printJsObject:before', function () {
             /** @var \MapasCulturais\Theme $this */
@@ -47,6 +179,10 @@ class Module extends \MapasCulturais\Module{
         });
 
         $app->hook('entity(Opportunity).insert:after', function() {
+            if ($this->isAppealPhase) {
+                return;
+            }
+
             if ($this->registrationSteps && count($this->registrationSteps) > 0) {
                 return;
             }
@@ -118,6 +254,12 @@ class Module extends \MapasCulturais\Module{
         // ajusta validação da área de interesse
         $app->hook('entity(Opportunity).validationErrors', function(&$errors) use ($app){
             /** @var Opportunity $this */
+            // Entity::getValidationErrors exige type em toda entidade que usa tipos.
+            // A fase de recurso é criada sem type e o formulário não oferece esse campo.
+            if ($this->isAppealPhase || $this->status === Opportunity::STATUS_APPEAL_PHASE) {
+                unset($errors['type'], $errors['shortDescription']);
+            }
+
             if(isset($errors['term-area'])) {
                 if($this->parent){
                     unset($errors['term-area']);
@@ -131,33 +273,170 @@ class Module extends \MapasCulturais\Module{
             }
         });
 
-        $distribute_execution_time = date($app->config['registrations.distribution.dateString']) . ' ' . $app->config['registrations.distribution.incrementString'];
+        $distribute_execution_time = function($distribution_config) {
+            if ($distribution_config === 'hourly') {
+                return date('Y-m-d H:00:00', strtotime('+1 hour'));
+            } 
+            
+            if ($distribution_config === 'daily') {
+                // Próxima meia-noite
+                $next_midnight = new \DateTime('tomorrow 00:00:00');
+                return $next_midnight->format('Y-m-d H:i:s');
+            }
+        };
+
+        /**
+         * Gera número sequencial para avaliadores da comissão
+         */
+        $app->hook('entity(EvaluationMethodConfigurationAgentRelation).save:before', function() use($app) {
+            /** @var EvaluationMethodConfigurationAgentRelation $this */
+
+            if (!$this->isNew() || $this->getCommitteeSequentialNumber()) {
+                return;
+            }
+
+            $firstPhase = $this->owner->opportunity->firstPhase;
+            $number = self::resolveCommitteeSequentialNumber($app, $firstPhase, (int) $this->agent->id);
+            $this->setCommitteeSequentialNumber($number);
+        });
 
         /** 
          * Enfileiramento dos JOBs de distribuição de avaliadores
          */
         $app->hook('entity(EvaluationMethodConfigurationAgentRelation).<<insert|update|delete>>:finish', function() use($app, $distribute_execution_time) {
             /** @var EvaluationMethodConfigurationAgentRelation $this */
-            $app->enqueueJob(Jobs\RedistributeCommitteeRegistrations::SLUG, ['evaluationMethodConfiguration' => $this->owner], $distribute_execution_time);
+
+            if($this->__skipRedistribution) {
+                return;
+            }
+            
+            $distribution_config = $this->owner->distributionConfiguration ?? 'deactivate';
+            
+            if($this->owner && $distribution_config != 'deactivate') {
+                $execution_time = $distribute_execution_time($distribution_config);
+                $app->enqueueJob(Jobs\RedistributeCommitteeRegistrations::SLUG, ['evaluationMethodConfiguration' => $this->owner], $execution_time);
+            }
         });
 
-        $_metadata_list = 'valuersPerRegistration|ignoreStartedEvaluations|fetchFields|fetchSelectionFields|fetch|fetchCategories|fetchRanges|fetchProponentTypes';
+        $_metadata_list = 'valuersPerRegistration|ignoreStartedEvaluations|fetchFields|fetchSelectionFields|fetch|fetchCategories|fetchRanges|fetchProponentTypes|distributionConfiguration';
         $app->hook("entity(EvaluationMethodConfiguration).meta(<<{$_metadata_list}>>).<<insert|update|delete>>:after", function() use($app) {
             /** @var EvaluationMethodConfigurationMeta $this */
             $this->owner->mustRedistributeCommitteeRegistrations = true;
         });
 
+        // Validação backend: impede valores negativos em valuersPerRegistration
+        $app->hook('entity(EvaluationMethodConfiguration).save:before', function() {
+            /** @var EvaluationMethodConfiguration $this */
+            if ($this->valuersPerRegistration) {
+                $valuersPerRegistration = $this->valuersPerRegistration;
+                foreach ($valuersPerRegistration as $committee => $value) {
+                    if ((int)$value < 0) {
+                        $valuersPerRegistration->$committee = 0;
+                    }
+                }
+                $this->valuersPerRegistration = $valuersPerRegistration;
+            }
+        });
+
+        // Valida integridade entre seções e critérios na resposta da API
+        $app->hook('entity(EvaluationMethodConfiguration).validationErrors', function(&$errors) {
+            /** @var EvaluationMethodConfiguration $this */
+            
+            // Só valida se sections ou criteria foram modificados
+            $has_criteria_changes = $this->getChangedMetadata()['criteria'] ?? false;
+            $has_sections_changes = $this->getChangedMetadata()['sections'] ?? false;
+            
+            if (!$has_criteria_changes && !$has_sections_changes) {
+                return;
+            }
+
+            if (!$this->validateCriteriaSectionsIntegrity()) {
+                // Adiciona erro no campo que foi enviado para garantir que apareça na resposta
+                if ($has_criteria_changes) {
+                    $errors['criteria'] = $errors['criteria'] ?? [];
+                    $errors['criteria'][] = i::__('Critérios com erros: existe(m) critério(s) sem seção associada ou com campos obrigatórios vazios');
+                }
+                if ($has_sections_changes) {
+                    $errors['sections'] = $errors['sections'] ?? [];
+                    $errors['sections'][] = i::__('Seções com erros: existe(m) seção(ões) sem critérios associados');
+                }
+            }
+        });
+
+        /**
+         * Imutabilidade pós-abertura (spec-c49fa0bb §3.6):
+         *
+         * Impede qualquer alteração em `sealExemptionConfig` (inclusive desativar)
+         * quando a fase já está aberta e possui inscrições enviadas.
+         * Rascunhos não bloqueiam a edição.
+         */
+        $app->hook('entity(EvaluationMethodConfiguration).save:before', function () use ($app) {
+            /** @var EvaluationMethodConfiguration $this */
+
+            /** @var array $changedMetadata */
+            $changedMetadata = $this->getChangedMetadata();
+            if (!array_key_exists('sealExemptionConfig', $changedMetadata)) {
+                return;
+            }
+
+            if ($this->_type === 'technical') {
+                $newConfig = $changedMetadata['sealExemptionConfig']['newValue'] ?? null;
+                if (SealExemptionService::hasActiveConfig($newConfig)) {
+                    throw new PermissionDenied(
+                        $app->user,
+                        message: i::__('A configuração de selos validadores não está disponível para Avaliação Técnica.')
+                    );
+                }
+                return;
+            }
+
+            if (!$this->getCanEditSealConfig()) {
+                throw new PermissionDenied(
+                    $app->user,
+                    message: i::__('A fase está aberta e já possui inscrições enviadas. A configuração de selos validadores não pode mais ser alterada.')
+                );
+            }
+
+            // Validação da condicionalidade de invalidadores (spec-fe9b2cfc):
+            // conditions é opcional; quando presente, valida forma e cruzamento.
+            $newConfig = $changedMetadata['sealExemptionConfig']['newValue'] ?? null;
+            if ($newConfig) {
+                $structError = \SealExemption\SealExemptionService::validateConditionsStructure($newConfig);
+                if ($structError !== null) {
+                    throw new \MapasCulturais\Exceptions\BadRequest($structError);
+                }
+                $crossError = \SealExemption\SealExemptionService::validateConditionsAgainstSeals($newConfig);
+                if ($crossError !== null) {
+                    throw new \MapasCulturais\Exceptions\BadRequest($crossError);
+                }
+            }
+        });
+
         $app->hook('entity(EvaluationMethodConfiguration).save:finish', function () use($app, $distribute_execution_time) {
             /** @var EvaluationMethodConfiguration $this */
             if ($this->mustRedistributeCommitteeRegistrations) {
-                $app->enqueueJob(Jobs\RedistributeCommitteeRegistrations::SLUG, ['evaluationMethodConfiguration' => $this], $distribute_execution_time);
+                $distribution_config = $this->distributionConfiguration ?? 'deactivate';
+                
+                if($distribution_config == 'deactivate') {
+                    $app->unqueueJob(Jobs\RedistributeCommitteeRegistrations::SLUG, ['evaluationMethodConfiguration' => $this], 'now', '1 hour');
+                    $app->unqueueJob(Jobs\RedistributeCommitteeRegistrations::SLUG, ['evaluationMethodConfiguration' => $this], 'now', '1 day');
+                    return;
+                }
+
+                $execution_time = $distribute_execution_time($distribution_config);
+                $app->enqueueOrReplaceJob(Jobs\RedistributeCommitteeRegistrations::SLUG, ['evaluationMethodConfiguration' => $this], $execution_time);
             }
         });
 
         $app->hook('entity(<<RegistrationEvaluation|Registration>>).send:after', function() use($app, $distribute_execution_time) {
             /** @var Registration $this */
             if($emc = $this->evaluationMethodConfiguration) {
-                $app->enqueueJob(Jobs\RedistributeCommitteeRegistrations::SLUG, ['evaluationMethodConfiguration' => $emc], $distribute_execution_time);
+                $distribution_config = $emc->distributionConfiguration ?? 'deactivate';
+                // Só agenda se não estiver desativado
+                if($distribution_config != 'deactivate') {
+                    $execution_time = $distribute_execution_time($distribution_config);
+                    $app->enqueueJob(Jobs\RedistributeCommitteeRegistrations::SLUG, ['evaluationMethodConfiguration' => $emc], $execution_time);
+                }
             }
         });
 
@@ -171,27 +450,32 @@ class Module extends \MapasCulturais\Module{
                 $app->enqueueOrReplaceJob(Jobs\UpdateSummaryCaches::SLUG, [
                     'opportunity' => $this->opportunity,
                     'evaluationMethodConfiguration' => $evaluation_method_configuration,
-                ], '10 seconds');
+                ], '90 seconds');
                 $app->mscache->delete($cache_key);
             }
         });
 
         $app->hook("entity(Registration).status(<<*>>)", function() use ($app, $distribute_execution_time) {
-            $app->log->debug("Registration {$this->id} status changed to {$this->status}");
+            if($this->evaluationMethodConfiguration){
+                $distribution_config = $this->evaluationMethodConfiguration->distributionConfiguration ?? 'deactivate';
+                // Só agenda se não estiver desativado
+                if($distribution_config != 'deactivate') {
+                    $execution_time = $distribute_execution_time($distribution_config);
+                    $app->enqueueJob(Jobs\RedistributeCommitteeRegistrations::SLUG, ['evaluationMethodConfiguration' => $this->evaluationMethodConfiguration], $execution_time);
+                }
 
-            $app->enqueueJob(Jobs\RedistributeCommitteeRegistrations::SLUG, ['evaluationMethodConfiguration' => $this->evaluationMethodConfiguration], $distribute_execution_time);
+                /** @var Registration $this */
+                /** @var Opportunity $opportunity */
+                $opportunity = $this->opportunity;
+                do{
+                    $app->enqueueOrReplaceJob(Jobs\UpdateSummaryCaches::SLUG, [
+                        'opportunity' => $opportunity
+                    ], '10 seconds');
 
-            /** @var Registration $this */
-            /** @var Opportunity $opportunity */
-            $opportunity = $this->opportunity;
-            do{
-                $app->enqueueOrReplaceJob(Jobs\UpdateSummaryCaches::SLUG, [
-                    'opportunity' => $opportunity
-                ], '10 seconds');
+                    $opportunity = $opportunity->nextPhase;
 
-                $opportunity = $opportunity->nextPhase;
-
-            } while ($opportunity);
+                } while ($opportunity);
+            }
         });
 
         $app->hook("entity(RegistrationEvaluation).save:after", function() use ($app) {
@@ -201,7 +485,7 @@ class Module extends \MapasCulturais\Module{
                 $app->mscache->save($cache_key, true, 10);
                 $app->enqueueOrReplaceJob(Jobs\UpdateSummaryCaches::SLUG, [
                     'evaluationMethodConfiguration' => $this->registration->opportunity->evaluationMethodConfiguration
-                ], '10 seconds');
+                ], '90 seconds');
                 $app->mscache->delete($cache_key);
             }
 
@@ -223,10 +507,23 @@ class Module extends \MapasCulturais\Module{
 
         $app->hook('entity(Opportunity).validations', function(&$validations) {
             /** @var Opportunity $this */
+            // Fases (coleta, avaliação, recurso) não têm os campos da oportunidade raiz.
+            $is_appeal_phase = $this->isAppealPhase || $this->status === Opportunity::STATUS_APPEAL_PHASE;
+            if ($this->parent || $is_appeal_phase) {
+                unset($validations['shortDescription']['required'], $validations['type']['required']);
+            }
+
             if (!$this->isNew() && !$this->isLastPhase) {
                 $validations['registrationFrom']['required'] = i::__('A data inicial das inscrições é obrigatória');
                 $validations['registrationTo']['required'] = i::__('A data final das inscrições é obrigatória');
-                $validations['shortDescription']['required'] = i::__('A descrição curtá é obrigatória');
+            }
+
+            if (!$this->isNew() && $this->isFirstPhase) {
+                $validations['shortDescription']['required'] = i::__('A descrição curta é obrigatória');
+            }
+
+            if (empty($this->controller->data['registrationTo'])) {
+                $validations['registrationFrom']['$this->validateRegistrationDates()'] = i::__('A data inicial das inscrições deve ser menor ou igual a data final');
             }
         });
 
@@ -236,7 +533,7 @@ class Module extends \MapasCulturais\Module{
          *
          * @todo pensar uma maneira de ativas os jobs sem necessidade de salvar as fases
          */
-        $app->hook("entity(Opportunity).<<(un)?publish|(un)?archive|(un)?delete|destroy>>:after", function() use ($app){
+        $app->hook("entity(Opportunity).<<(un)?publish|(un)?archive|(un)?delete>>:after", function() use ($app){
             /** @var Opportunity $this */
 
             foreach($this->allPhases as $phase) {
@@ -257,8 +554,16 @@ class Module extends \MapasCulturais\Module{
             /** @var Opportunity $this */
             $data = ['opportunity' => $this];
 
-            // verifica se a oportunidade e a fase estão públicas
-            $active = in_array($this->status, [-1, Opportunity::STATUS_ENABLED]) && $this->firstPhase->status === Opportunity::STATUS_ENABLED;
+            // verifica se a oportunidade e a fase estão públicas.
+            // Na fase de recurso, o que importa é o status da oportunidade raiz (edital publicado):
+            // o pai imediato pode ser o próprio edital (STATUS_ENABLED) ou uma fase intermediária (STATUS_PHASE).
+            $root = $this;
+            while ($root->parent) {
+                $root = $root->parent;
+            }
+
+            $active = in_array($this->status, [Opportunity::STATUS_PHASE, Opportunity::STATUS_APPEAL_PHASE, Opportunity::STATUS_ENABLED], true)
+                && $root->status === Opportunity::STATUS_ENABLED;
 
             $now = new \DateTime;
 
@@ -266,7 +571,13 @@ class Module extends \MapasCulturais\Module{
             $registration_from_changed = $this->_changes['registrationFrom'] ?? false;
             $registration_to_changed = $this->_changes['registrationTo'] ?? false;
 
-            if($active && $this->publishTimestamp && ($this->autoPublish && $this->publishTimestamp >= $now || $registration_from_changed)){
+            // O campo de horário não tem segundos: quem escolhe o minuto atual salva com o horário já passado.
+            // Se a configuração de publicação mudou neste salvamento e o horário passou há até 10 minutos, publica imediatamente.
+            $publish_config_changed = ($this->_changes['publishTimestamp'] ?? false) || ($this->_changes['autoPublish'] ?? false);
+            $publish_recently_passed = $this->publishTimestamp && $this->publishTimestamp >= (clone $now)->modify('-10 minutes');
+            $publish_on_time = $this->publishTimestamp && ($this->publishTimestamp >= $now || ($publish_config_changed && $publish_recently_passed));
+
+            if($active && $this->publishTimestamp && !$this->publishedRegistrations && (($this->autoPublish && $publish_on_time) || $registration_from_changed)){
                 $app->enqueueOrReplaceJob(Jobs\PublishResult::SLUG, $data, $this->publishTimestamp->format("Y-m-d H:i:s"));
             } else {
                 $app->unqueueJob(Jobs\PublishResult::SLUG, $data);
@@ -353,6 +664,32 @@ class Module extends \MapasCulturais\Module{
             $this->render("registration-print", ['entity' => $entity]);
         });
 
+        // Atualiza o resumo de avaliações dos avaliadores do edital
+         $app->hook("GET(opportunity.updateSumaryEvaluation)", function() use ($app) {
+            /** @var ControllersOpportunity $this */
+            $app = App::i();
+        
+            $this->requireAuthentication();
+
+            $entity = $this->requestedEntity;
+
+            if(!$entity) {
+                $app->pass();
+            }
+
+            $entity->checkPermission('@control');
+
+            $em = $entity->evaluationMethodConfiguration;
+            
+            if($valuers = $entity->getEvaluationCommittee(true)) {
+                foreach($valuers as $relation) {
+                    $em->getUserRelation($relation->agent->user)->updateSummary(flush: true);
+                    $app->log->debug("Atualiza resumo das avaliações do usuário {$relation->agent->user->id}");
+                }
+            }
+         });
+
+
         $app->hook('panel.nav', function(&$nav_items) use($app) {
             $nav_items['opportunities']['items'] = [
                 ['route' => 'panel/opportunities', 'icon' => 'opportunity', 'label' => i::__('Minhas oportunidades')],
@@ -363,23 +700,21 @@ class Module extends \MapasCulturais\Module{
             ];
         });
 
-        $app->hook('Theme::addOpportunityBreadcramb', function($unused, $label) use($app) {
+        $app->hook('Theme::addOpportunityBreadcramb', function($unused, $label, Opportunity|EvaluationMethodConfiguration $requested_entity) use($app) {
             /** @var \MapasCulturais\Themes\BaseV2\Theme $this */
-            /** @var Opportunity $entity */
-            $entity = $this->controller->requestedEntity;
-
+            
             $is_valuer = false;
 
-            if($entity instanceof EvaluationMethodConfiguration) {
-                $first_phase = $entity->opportunity->firstPhase;
-                $relation = $entity->getUserRelation($app->user);
+            if($requested_entity instanceof EvaluationMethodConfiguration) {
+                $first_phase = $requested_entity->opportunity->firstPhase;
+                $relation = $requested_entity->getUserRelation($app->user);
 
                 $is_valuer = $relation && $relation->status === AgentRelation::STATUS_ENABLED;
             } else {
-                $first_phase = $entity->firstPhase;
+                $first_phase = $requested_entity->firstPhase;
 
-                if ($entity->evaluationMethodConfiguration) {
-                    $relation = $entity->evaluationMethodConfiguration->getUserRelation($app->user);
+                if ($requested_entity->evaluationMethodConfiguration) {
+                    $relation = $requested_entity->evaluationMethodConfiguration->getUserRelation($app->user);
                     $is_valuer = $relation && $relation->status === AgentRelation::STATUS_ENABLED;
                 }
             }
@@ -398,10 +733,10 @@ class Module extends \MapasCulturais\Module{
                 ];
             }
 
-            if ($entity->isFirstPhase) {
+            if ($requested_entity->isFirstPhase) {
                 $breadcrumb[] = ['label'=> i::__('Período de inscrição')];
             } else {
-                $breadcrumb[] = ['label'=> $entity->name];
+                $breadcrumb[] = ['label'=> $requested_entity->name];
             }
             $breadcrumb[] = ['label'=> $label];
 
@@ -428,7 +763,7 @@ class Module extends \MapasCulturais\Module{
             $this->jsObject['evaluationInfos'] = $infos;
         });
 
-        $app->hook('Theme::addRegistrationPhasesToJs', function ($unused = null, $registration = null) use ($app) {
+        $app->hook('Theme::addRegistrationPhasesToJs', function ($unused, $registration = null) use ($app) {
             /** @var \MapasCulturais\Themes\BaseV2\Theme $this */
             $this->useOpportunityAPI();
             if (!$registration) {
@@ -444,42 +779,46 @@ class Module extends \MapasCulturais\Module{
             foreach($registrations as $reg) {
                 /** @var \MapasCulturais\Entities\Registration $reg */
                 $phases[$reg->opportunity->id] = $reg->jsonSerialize();
+                $phases[$reg->opportunity->id]['currentUserPermissions'] = $reg->getUserPermissions();
             }
 
             $this->jsObject['registrationPhases'] = $phases;
         });
 
-        $app->hook('Theme::addOpportunityPhasesToJs', function ($unused = null, $opportunity = null) use ($app) {
-            /** @var \MapasCulturais\Themes\BaseV2\Theme $this */
-            $this->useOpportunityAPI();
-            if (!$opportunity) {
-                $entity = $this->controller->requestedEntity;
-
-                if ($entity instanceof Opportunity) {
-                    $opportunity = $entity;
-                } else if ($entity instanceof Registration) {
-                    $opportunity = $entity->opportunity;
-                } else if ($entity instanceof EvaluationMethodConfiguration) {
-                    $opportunity = $entity->opportunity;
-                } else {
-                    throw new Exception();
-                }
+        $app->hook('Theme::getOpportunityFromEntity', function ($unused, Entity $entity) use ($app) {
+            if ($entity instanceof Opportunity) {
+                return $entity;
             }
+
+            if ($entity instanceof EvaluationMethodConfiguration) {
+                return $entity->opportunity;
+            }
+
+            if ($entity instanceof Registration) {
+                return $entity->opportunity;
+            }
+
+            return null;
+        });
+
+
+        $app->hook('Theme::addOpportunityPhasesToJs', function ($unused, ?Entity $requested_entity = null) use ($app) {
+            /** @var \MapasCulturais\Themes\BaseV2\Theme $this */
+
+            $requested_entity = $requested_entity ?: $this->controller->requestedEntity;
+
+            $opportunity = $this->getOpportunityFromEntity($requested_entity);
+            $this->useOpportunityAPI();
+           
             $this->jsObject['opportunityPhases'] = $opportunity->firstPhase->phases;
         });
 
-        $app->hook('Theme::addRegistrationFieldsToJs', function ($unused = null, $opportunity = null) use ($app) {
-            if (!$opportunity) {
-                $entity = $this->controller->requestedEntity;
+        $app->hook('Theme::addRegistrationFieldsToJs', function ($unused, ?Entity $requested_entity = null) use ($app) {
+            /** @var \MapasCulturais\Themes\BaseV2\Theme $this */
 
-                if ($entity instanceof Opportunity) {
-                    $opportunity = $entity;
-                } else if ($entity instanceof Registration) {
-                    $opportunity = $entity->opportunity;
-                } else {
-                    throw new Exception();
-                }
-            }
+            $requested_entity = $requested_entity ?: $this->controller->requestedEntity;
+
+            $opportunity = $this->getOpportunityFromEntity($requested_entity);
 
             $fields = array_merge((array) $opportunity->registrationFileConfigurations, (array) $opportunity->registrationFieldConfigurations);
 
@@ -487,7 +826,10 @@ class Module extends \MapasCulturais\Module{
                 return $a->displayOrder <=> $b->displayOrder;
             });
 
-            $this->jsObject['registrationFields'] = $fields;
+            $this->jsObject['registrationFields'] = array_map(
+                fn ($field) => $field->jsonSerialize(),
+                $fields
+            );
         });
 
         $app->hook('mapas.printJsObject:before', function() use($app) {
@@ -548,12 +890,14 @@ class Module extends \MapasCulturais\Module{
                     $data['evaluationsDetails'] = [];
 
                     $evaluations = $this->sentEvaluations;
+                    
+                    // Verifica se o usuário pode ver os nomes dos avaliadores
+                    $can_view_valuer_names = $opportunity->canUser('@control') || 
+                                              $evaluation_configuration->publishValuerNames;
 
                     foreach($evaluations as $eval) {
                         $detail = $em->getEvaluationDetails($eval);
-                        if ($evaluation_configuration->publishValuerNames){
-                            $detail['valuer'] = $eval->user->profile->simplify('id,name,singleUrl');
-                        }
+                        self::enrichEvaluationDetailWithValuerInfo($detail, $this, $evaluation_configuration, $eval, $app);
                         $data['evaluationsDetails'][] = $detail;
                     }
                 }
@@ -576,7 +920,7 @@ class Module extends \MapasCulturais\Module{
             ];
         });
 
-        $app->hook('entity(EvaluationMethodConfiguration).propertiesMetadata', function(&$result) {
+        $app->hook('entity(EvaluationMethodConfiguration).propertiesMetadata', function(&$result) use($app) {
             $result['useCommitteeGroups'] = [
                 'isMetadata' => false,
                 'isEntityRelation' => false,
@@ -589,6 +933,17 @@ class Module extends \MapasCulturais\Module{
                 'isReadonly' => true,
                 'label' => i::__('Indica se pode ser utilizada a auto aplicação de resultados')
             ];
+
+            // Remove os tipos de avaliação internos da lista de tipos de avaliação
+            $public_evaluation_methods = $app->getRegisteredEvaluationMethods();
+            $types = $result['type']['options'];
+            foreach($types as $type => $label) {
+                if(!isset($public_evaluation_methods[$type])) {
+                    unset($result['type']['options'][$type]);
+                    unset($result['type']['optionsOrder'][array_search($type, $result['type']['optionsOrder'])]);
+                    $result['type']['optionsOrder'] = array_values($result['type']['optionsOrder']);
+                }
+            }
         });
 
        // Atualiza a coluna metadata da relação do agente com a avaliação com od dados do summary das avaliações no momento de inserir, atualizar ou remover.
@@ -609,13 +964,9 @@ class Module extends \MapasCulturais\Module{
         // Atualiza a coluna metadata da relação do agente com a avaliação com od dados do summary das avaliações no momento da alteração de status.
         $app->hook("entity(RegistrationEvaluation).setStatus(<<*>>)", function() use ($app) {
             /** @var \MapasCulturais\Entities\RegistrationEvaluation $this */
-            $opportunity = $this->registration->opportunity;
 
-            $user = $app->user;
-            if ($opportunity->canUser('@control')) {
-                $user = $this->user;
-            }
-
+            $user = $this->user;
+            
             if ($em = $this->getEvaluationMethodConfiguration()) {
                 $em->getUserRelation($user)->updateSummary();
             }
@@ -711,48 +1062,9 @@ class Module extends \MapasCulturais\Module{
             /** @var \MapasCulturais\Entities\RegistrationEvaluation $this */
             $registration = $this->registration;
             $opportunity = $registration->opportunity;
-            $evaluation_type = $opportunity->evaluationMethodConfiguration->type->id;
-
-            if($opportunity->evaluationMethodConfiguration->autoApplicationAllowed) {
-                if($registration->needsTiebreaker() && !$registration->evaluationMethod->getTiebreakerEvaluation($registration)) {
-                    return;
-                }
-                $conn = $app->em->getConnection();
-                $evaluations = $conn->fetchAll("
-                    SELECT
-                       *
-                    FROM
-                        evaluations
-                    WHERE
-                        registration_id = {$registration->id}"
-                );
-
-                $all_status_sent = true;
-
-                foreach ($evaluations as $evaluation) {
-                    if ($evaluation['evaluation_status'] !== RegistrationEvaluation::STATUS_SENT) {
-                        $all_status_sent = false;
-                    }
-                }
-
-                if ($all_status_sent) {
-                    if($evaluation_type == 'simple') {
-                        $value = $registration->consolidatedResult;
-                    }
-
-                    if($evaluation_type == 'documentary') {
-                        $value = $registration->consolidatedResult == 1 ? Registration::STATUS_APPROVED : Registration::STATUS_NOTAPPROVED;
-                    }
-
-                    if($evaluation_type == 'qualification') {
-                        $value = $registration->consolidatedResult == 'Habilitado' ? Registration::STATUS_APPROVED : Registration::STATUS_NOTAPPROVED;
-                    }
-
-                    $app->disableAccessControl();
-                    $registration->setStatus($value);
-                    $registration->save();
-                    $app->enableAccessControl();
-                }
+            
+            if ($opportunity->evaluationMethodConfiguration->autoApplicationAllowed) {
+                $opportunity->evaluationMethod->applyConsolidatedResult($registration);
             }
         });
 
@@ -762,62 +1074,65 @@ class Module extends \MapasCulturais\Module{
 
             $opportunity = $this->opportunity;
 
-            if ($opportunity && ($opportunity->publishedRegistrations || $this->opportunity->firstPhase->isContinuousFlow)) {
-               $seals = $opportunity->proponentSeals;
-               $proponent_type = $this->proponentType;
-               $owner = $this->owner;
-               $proponent_typesTo_agents_Map = $app->config['registration.proponentTypesToAgentsMap'];
-               $categories_seals = $opportunity->categorySeals;
-               $category = $this->category;
+            if (!$opportunity || !$self->shouldApplyCertifierSealsOnApproval($opportunity)) {
+                return;
+            }
 
-               if($proponent_type){
+            $seals_source = $self->getCertifierSealsSource($opportunity);
+            $seals = $seals_source->proponentSeals;
+            $proponent_type = $this->proponentType;
+            $owner = $this->owner;
+            $proponent_typesTo_agents_Map = $app->config['registration.proponentTypesToAgentsMap'];
+            $categories_seals = $seals_source->categorySeals;
+            $category = $this->category;
 
-                   if (array_key_exists($proponent_type, $proponent_typesTo_agents_Map)) {
-                       $agent_type = $proponent_typesTo_agents_Map[$proponent_type];
-                       if (isset($seals->$proponent_type)) {
-                            $proponent_seals = $seals->{$proponent_type};
-                            if($agent_type == "owner"){
-                               $self->applySeal($owner,$proponent_seals);
-                            }
+            if($proponent_type){
 
-                            if($agent_type == "coletivo"){
-                                $agents = $this->getAgentRelations();
-                                $self->applySeal($agents[0]->agent, $proponent_seals);
-                            }
+                if (array_key_exists($proponent_type, $proponent_typesTo_agents_Map)) {
+                    $agent_type = $self->getProponentSealAgentType($this, $proponent_typesTo_agents_Map);
+                    if (isset($seals->$proponent_type)) {
+                        $proponent_seals = $seals->{$proponent_type};
+                        if($agent_type == "owner"){
+                           $self->applySeal($owner,$proponent_seals);
                         }
-                    }
 
-                    // Se a inscrição tiver "tipo de proponente" e "categoria", adicionar o selo verificador da categoria, caso possua.
-                    if($category) {
-                        if (array_key_exists($proponent_type, $proponent_typesTo_agents_Map)) {
-                            $agent_type = $proponent_typesTo_agents_Map[$proponent_type];
-
-                            if (isset($categories_seals->{$category})) {
-                                $category_seals = $categories_seals->{$category};
-
-                                // Verifica se a opção "Habilitar a vinculação de agente coletivo" esta ativa
-                                if($opportunity->firstPhase->useAgentRelationColetivo == 'required') {
-                                    if($agent_type == "coletivo"){
-                                        $agents = $this->getAgentRelations();
-                                        $self->applySeal($agents[0]->agent, $category_seals);
-                                    }
-                                }
-
-                                if($agent_type == "owner"){
-                                   $self->applySeal($owner, $category_seals);
-                                }
-                            }
-
+                        if($agent_type == "coletivo"){
+                            $agents = $this->getAgentRelations();
+                            $self->applySeal($agents[0]->agent, $proponent_seals);
                         }
                     }
                 }
 
-                // Se tiver apenas "categoria" e não houver "tipo de proponente", adicionar selo verificador (caso configurado) apenas no agente individual
-                if($category && !$proponent_type) {
-                    if (isset($categories_seals->{$category})) {
-                        $category_seals = $categories_seals->{$category};
-                        $self->applySeal($owner, $category_seals);
+                // Se a inscrição tiver "tipo de proponente" e "categoria", adicionar o selo verificador da categoria, caso possua.
+                if($category) {
+                    if (array_key_exists($proponent_type, $proponent_typesTo_agents_Map)) {
+                        $agent_type = $self->getProponentSealAgentType($this, $proponent_typesTo_agents_Map);
+
+                        if (isset($categories_seals->{$category})) {
+                            $category_seals = $categories_seals->{$category};
+
+                            // Verifica se a opção "Habilitar a vinculação de agente coletivo" esta ativa
+                            if($opportunity->firstPhase->useAgentRelationColetivo == 'required') {
+                                if($agent_type == "coletivo"){
+                                    $agents = $this->getAgentRelations();
+                                    $self->applySeal($agents[0]->agent, $category_seals);
+                                }
+                            }
+
+                            if($agent_type == "owner"){
+                               $self->applySeal($owner, $category_seals);
+                            }
+                        }
                     }
+
+                }
+            }
+
+            // Se tiver apenas "categoria" e não houver "tipo de proponente", adicionar selo verificador (caso configurado) apenas no agente individual
+            if($category && !$proponent_type) {
+                if (isset($categories_seals->{$category})) {
+                    $category_seals = $categories_seals->{$category};
+                    $self->applySeal($owner, $category_seals);
                 }
             }
         });
@@ -826,19 +1141,24 @@ class Module extends \MapasCulturais\Module{
             /** @var \MapasCulturais\Entities\Registration $this */
 
             $opportunity = $this->opportunity;
+            $seals_source = $self->getCertifierSealsSource($opportunity);
+            $seals = $seals_source->proponentSeals;
 
-            if ($opportunity && ($opportunity->publishedRegistrations || $this->opportunity->firstPhase->isContinuousFlow)) {
-                $seals = $opportunity->proponentSeals;
+            if (!$seals) {
+                return;
+            }
+
+            if ($opportunity && $self->shouldApplyCertifierSealsOnApproval($opportunity)) {
+                $proponent_type_seals = $seals_source->proponentSeals;
                 $proponent_type = $this->proponentType;
                 $owner = $this->owner;
-                $categories_seals = $opportunity->categorySeals;
+                $categories_seals = $seals_source->categorySeals;
                 $category = $this->category;
+                $proponent_typesTo_agents_Map = $app->config['registration.proponentTypesToAgentsMap'];
+                $agent_type = $self->getProponentSealAgentType($this, $proponent_typesTo_agents_Map);
 
-                if ($proponent_type) {
-                    $proponent_seals = $seals->{$proponent_type};
-                    $proponent_typesTo_agents_Map = $app->config['registration.proponentTypesToAgentsMap'];
-                    $agent_type = $proponent_typesTo_agents_Map[$proponent_type] ?? null;
-
+                if ($proponent_type && $proponent_type_seals && isset($proponent_type_seals->{$proponent_type})) {
+                    $proponent_seals = $proponent_type_seals->{$proponent_type};
 
                     if ($agent_type == "owner") {
                         $relations = $owner->getSealRelations();
@@ -854,39 +1174,26 @@ class Module extends \MapasCulturais\Module{
                             $self->removeSeals($app, $relations, $proponent_seals);
                         }
                     }
-
-                    // Se a inscrição tiver "tipo de proponente" e "categoria", remover o selo verificador da categoria, caso possua.
-                    if($category) {
-                        if (isset($categories_seals->{$category})) {
-                            $category_seals = $categories_seals->{$category};
-
-                             // Verifica se a opção "Habilitar a vinculação de agente coletivo" esta ativa
-                            if($opportunity->firstPhase->useAgentRelationColetivo == 'required') {
-                                if ($agent_type == "coletivo") {
-                                    $agent_relations = $this->getAgentRelations();
-    
-                                    foreach ($agent_relations as $agent_relation) {
-                                        $agent = $agent_relation->agent;
-                                        $relations = $agent->getSealRelations();
-                                        $self->removeSeals($app, $relations, $category_seals);
-                                    }
-                                }
-                            }
-
-                            if ($agent_type == "owner") {
-                                $relations = $owner->getSealRelations();
-                                $self->removeSeals($app, $relations, $category_seals);
-                            }
-                        }
-                    }
                 }
 
-                // Se tiver apenas "categoria" e não houver "tipo de proponente", remover selo verificador (caso configurado) do agente individual
-                if($category && !$proponent_type) {
-                    if (isset($categories_seals->{$category})) {
-                        $category_seals = $categories_seals->{$category};
+                // Se tiver "categoria" remover selo verificador (caso configurado) do agente individual
+                if($category && $categories_seals && isset($categories_seals->{$category})) {
+                    $category_seals = $categories_seals->{$category};
+                    if($agent_type == 'owner'){
                         $relations = $owner->getSealRelations();
                         $self->removeSeals($app, $relations, $category_seals);
+
+                    }
+
+                    // Verifica se a opção "Habilitar a vinculação de agente coletivo" esta ativa
+                    if($proponent_type && $opportunity->firstPhase->useAgentRelationColetivo == 'required' && $agent_type == "coletivo") {
+                        $agent_relations = $this->getAgentRelations();
+
+                        foreach ($agent_relations as $agent_relation) {
+                            $agent = $agent_relation->agent;
+                            $relations = $agent->getSealRelations();
+                            $self->removeSeals($app, $relations, $category_seals);
+                        }
                     }
                 }
             }
@@ -896,7 +1203,9 @@ class Module extends \MapasCulturais\Module{
         $app->hook("entity(Opportunity).publishRegistrations:after", function() use($app, $self){
             /** @var \MapasCulturais\Entities\Opportunity $this */
 
-            if($this->proponentSeals || $this->categorySeals){
+            $seals_source = $self->getCertifierSealsSource($this);
+
+            if($seals_source->proponentSeals || $seals_source->categorySeals){
                 $proponent_typesTo_agents_Map = $app->config['registration.proponentTypesToAgentsMap'];
                 $registrations = $app->repo('Registration')->findBy(['opportunity' => $this]);
 
@@ -905,20 +1214,23 @@ class Module extends \MapasCulturais\Module{
                     if($registration->status == Registration::STATUS_APPROVED){
                     $proponent_type = $registration->proponentType;
                         $category = $registration->category;
-                        $categories_seals = $this->categorySeals;
+                        $categories_seals = $seals_source->categorySeals;
                         $owner = $registration->owner;
 
                         if($proponent_type){
-                            $proponent_seals = $this->proponentSeals->{$proponent_type};
-                            $agent_type = $proponent_typesTo_agents_Map[$proponent_type];
+                            $agent_type = $self->getProponentSealAgentType($registration, $proponent_typesTo_agents_Map);
 
-                            if($agent_type == "owner"){
-                                $self->applySeal($owner,$proponent_seals);
-                            }
+                            if (isset($seals_source->proponentSeals->{$proponent_type})) {
+                                $proponent_seals = $seals_source->proponentSeals->{$proponent_type};
 
-                            if($agent_type == "coletivo"){
-                                if($agents = $registration->getAgentRelations()){
-                                    $self->applySeal($agents[0]->agent, $proponent_seals);
+                                if($agent_type == "owner"){
+                                    $self->applySeal($owner,$proponent_seals);
+                                }
+
+                                if($agent_type == "coletivo"){
+                                    if($agents = $registration->getAgentRelations()){
+                                        $self->applySeal($agents[0]->agent, $proponent_seals);
+                                    }
                                 }
                             }
 
@@ -956,7 +1268,9 @@ class Module extends \MapasCulturais\Module{
 
         $app->hook("entity(Opportunity).unpublishRegistrations:after", function() use($app, $self) {
             /** @var \MapasCulturais\Entities\Opportunity $this */
-            if ($this->proponentSeals || $this->categorySeals) {
+            $seals_source = $self->getCertifierSealsSource($this);
+
+            if ($seals_source->proponentSeals || $seals_source->categorySeals) {
 
                 $proponent_typesTo_agents_Map = $app->config['registration.proponentTypesToAgentsMap'];
                 $registrations = $app->repo('Registration')->findBy(['opportunity' => $this]);
@@ -964,26 +1278,29 @@ class Module extends \MapasCulturais\Module{
                 foreach ($registrations as $registration) {
                     if ($registration->status == \MapasCulturais\Entities\Registration::STATUS_APPROVED) {
                         $proponent_type = $registration->proponentType;
-                        $categories_seals = $this->categorySeals;
+                        $categories_seals = $seals_source->categorySeals;
                         $category = $registration->category;
                         $owner = $registration->owner;
 
                         if ($proponent_type) {
-                            $proponent_seals = $this->proponentSeals->{$proponent_type};
-                            $agent_type = $proponent_typesTo_agents_Map[$proponent_type];
+                            $agent_type = $self->getProponentSealAgentType($registration, $proponent_typesTo_agents_Map);
 
-                            if ($agent_type == "owner") {
-                                $relations = $owner->getSealRelations();
-                                $self->removeSeals($app, $relations, $proponent_seals);
-                            }
+                            if (isset($seals_source->proponentSeals->{$proponent_type})) {
+                                $proponent_seals = $seals_source->proponentSeals->{$proponent_type};
 
-                            if ($agent_type == "coletivo") {
-                                $agent_relations = $registration->getAgentRelations();
-
-                                foreach ($agent_relations as $agent_relation) {
-                                    $agent = $agent_relation->agent;
-                                    $relations = $agent->getSealRelations();
+                                if ($agent_type == "owner") {
+                                    $relations = $owner->getSealRelations();
                                     $self->removeSeals($app, $relations, $proponent_seals);
+                                }
+
+                                if ($agent_type == "coletivo") {
+                                    $agent_relations = $registration->getAgentRelations();
+
+                                    foreach ($agent_relations as $agent_relation) {
+                                        $agent = $agent_relation->agent;
+                                        $relations = $agent->getSealRelations();
+                                        $self->removeSeals($app, $relations, $proponent_seals);
+                                    }
                                 }
                             }
 
@@ -1023,6 +1340,15 @@ class Module extends \MapasCulturais\Module{
                     }
                 }
             }
+        });
+
+        $app->hook('template(opportunity.allEvaluations.entityTableSortOptions)', function(&$sort_options) {
+            $sort_options = [
+                [ 'value' => 'sentTimestamp DESC',   'label' => i::__('mais recentes primeiro') ],
+                [ 'value' => 'sentTimestamp ASC',    'label' => i::__('mais antigas primeiro') ],
+                [ 'value' => 'updateTimestamp DESC', 'label' => i::__('modificadas recentemente') ],
+                [ 'value' => 'updateTimestamp ASC',  'label' => i::__('modificadas há mais tempo') ],
+            ];
         });
     }
 
@@ -1081,10 +1407,28 @@ class Module extends \MapasCulturais\Module{
             'default' => false,
         ]);
 
+        $this->registerOpportunityMetadata('hidePhaseDates', [
+            'label' => i::__('Ocultar datas das fases para o público'),
+            'type' => 'boolean',
+            'default' => false,
+        ]);
+
+        $this->registerOpportunityMetadata('publicityOnly', [
+            'label' => i::__('Oportunidade apenas para divulgação'),
+            'type' => 'boolean',
+            'default' => false,
+        ]);
+
         $this->registerOpportunityMetadata('proponentAgentRelation', [
             'label' => i::__('Vinculação de Agente coletivo para tipos de proponente'),
             'type' => 'object',
             'description' => i::__('Armazena se a vinculação de agente coletivo está habilitada para Coletivo ou Pessoa Jurídica'),
+        ]);
+
+        $this->registerOpportunityMetadata('proponentAgentRelationAvatar', [
+            'label' => i::__('Solicitação de avatar do Agente coletivo para tipos de proponente'),
+            'type' => 'object',
+            'description' => i::__('Armazena se o avatar do agente coletivo é obrigatório para Coletivo ou Pessoa Jurídica'),
         ]);
 
         $this->registerEvauationMethodConfigurationMetadata('fetchFields', [
@@ -1132,9 +1476,68 @@ class Module extends \MapasCulturais\Module{
             'type' => 'boolean',
             'default' => false,
         ]);
+
+        $this->registerEvauationMethodConfigurationMetadata('distributionConfiguration', [
+            'label' => i::__('Configuração da distribuição das inscrições entre os avaliadores'),
+            'type' => 'select',
+            'options' => [
+                'hourly' => i::__('Distribuição por hora'),
+                'daily' => i::__('Distribuição por dia'),
+                'deactivate' => i::__('Desativar distribuição'),
+            ],
+            'default' => 'hourly',
+        ]);
+
+        // Configuração de selos validadores para isenção automática de fase.
+        // Estrutura: { seals: [id1, id2, ...], label: string } (spec-c49fa0bb §3.1).
+        // Visível apenas para quem tem @control da oportunidade (selos podem ser
+        // sensíveis — LGPD). Pré-requisito do hook save:before de imutabilidade.
+        $this->registerEvauationMethodConfigurationMetadata('sealExemptionConfig', [
+            'label' => i::__('Configuração de selos validadores para isenção de fase'),
+            'type' => 'json',
+            'private' => function () {
+                $opportunity = $this->opportunity ?? null;
+
+                if (!$opportunity) {
+                    return true;
+                }
+
+                if (!$opportunity instanceof Opportunity) {
+                    $opportunity = App::i()->repo('Opportunity')->find($opportunity);
+                }
+
+                return !$opportunity instanceof Opportunity || !$opportunity->canUser('@control');
+            },
+        ]);
     }
 
-    public function applySeal(Agent $agent, array $sealIds){
+    /**
+     * Selos certificadores (proponentSeals / categorySeals) são configurados na 1ª fase do edital.
+     */
+    private function getCertifierSealsSource(Opportunity $opportunity): Opportunity
+    {
+        return $opportunity->firstPhase;
+    }
+
+    /**
+     * Define quando selos certificadores devem ser aplicados/removidos na inscrição.
+     */
+    private function shouldApplyCertifierSealsOnApproval(Opportunity $opportunity): bool
+    {
+        $first_phase = $opportunity->firstPhase;
+        $emc = $opportunity->evaluationMethodConfiguration;
+
+        return $first_phase->publishedRegistrations
+            || $first_phase->isContinuousFlow
+            || $opportunity->publishedRegistrations
+            || ($emc && $emc->autoApplicationAllowed);
+    }
+
+    public function applySeal(?Agent $agent, ?array $sealIds){
+        if (!$agent || !$sealIds) {
+            return;
+        }
+
         $app = App::i();
         foreach($sealIds as $sealId) {
             $seal = $app->repo('Seal')->find($sealId);
@@ -1148,12 +1551,38 @@ class Module extends \MapasCulturais\Module{
                 }
             }
             if(!$has_new_seal){
-                $agent->createSealRelation($seal);
+                $agent->createSealRelation($seal, agent: $agent);
             }
         }
     }
 
+    private function getProponentSealAgentType(Registration $registration, array $proponentTypesToAgentsMap): ?string {
+        $proponent_type = $registration->proponentType;
+        $agent_type = $proponentTypesToAgentsMap[$proponent_type] ?? 'owner';
+
+        if ($agent_type !== 'coletivo') {
+            return $agent_type;
+        }
+
+        $opportunity = $registration->opportunity;
+        $proponent_agent_relation = $opportunity->proponentAgentRelation ?? null;
+
+        if (is_object($proponent_agent_relation) && property_exists($proponent_agent_relation, $proponent_type)) {
+            return $proponent_agent_relation->{$proponent_type} ? 'coletivo' : null;
+        }
+
+        if (is_array($proponent_agent_relation) && array_key_exists($proponent_type, $proponent_agent_relation)) {
+            return $proponent_agent_relation[$proponent_type] ? 'coletivo' : null;
+        }
+
+        return $opportunity->firstPhase->useAgentRelationColetivo == 'required' ? 'coletivo' : null;
+    }
+
     function removeSeals($app, $relations, $proponent_seals) {
+        if (!$proponent_seals) {
+            return;
+        }
+
         foreach ($proponent_seals as $proponent_seal) {
             $seal = $app->repo('Seal')->find($proponent_seal);
 
@@ -1164,5 +1593,215 @@ class Module extends \MapasCulturais\Module{
                 }
             }
         }
+    }
+
+    /**
+     * IDs de EvaluationMethodConfiguration do edital (fases de avaliação + fases de recurso).
+     *
+     * @return int[]
+     */
+    public static function getEvaluationMethodConfigurationIdsForCommitteeSequentialNumber(Opportunity $firstPhase): array
+    {
+        $emc_ids = [];
+
+        foreach ($firstPhase->allPhases as $phase) {
+            if ($emc = $phase->evaluationMethodConfiguration) {
+                $emc_ids[$emc->id] = (int) $emc->id;
+            }
+
+            if ($appeal = $phase->appealPhase) {
+                if ($appeal_emc = $appeal->evaluationMethodConfiguration) {
+                    $emc_ids[$appeal_emc->id] = (int) $appeal_emc->id;
+                }
+            }
+        }
+
+        return array_values($emc_ids);
+    }
+
+    /**
+     * Define o número sequencial para uma nova relação de avaliador.
+     */
+    public static function resolveCommitteeSequentialNumber(App $app, Opportunity $firstPhase, int $agentId): int
+    {
+        $conn = $app->em->getConnection();
+        $existing_number = null;
+        $max_number = 0;
+
+        foreach (self::getEvaluationMethodConfigurationIdsForCommitteeSequentialNumber($firstPhase) as $emc_id) {
+            $relations = $conn->fetchAllAssociative(
+                "SELECT ar.metadata, ar.agent_id FROM agent_relation ar
+                 WHERE ar.object_type = 'MapasCulturais\\Entities\\EvaluationMethodConfiguration'
+                 AND ar.object_id = :emcId AND ar.status > 0",
+                ['emcId' => $emc_id]
+            );
+
+            foreach ($relations as $relation) {
+                $metadata = json_decode($relation['metadata'] ?: '{}', true);
+                $number = isset($metadata['committeeSequentialNumber']) ? (int) $metadata['committeeSequentialNumber'] : null;
+
+                if ($number && $number > $max_number) {
+                    $max_number = $number;
+                }
+
+                if ((int) $relation['agent_id'] === $agentId && $number) {
+                    $existing_number = $number;
+                    break 2;
+                }
+            }
+        }
+
+        return $existing_number ?? ($max_number + 1);
+    }
+
+    /**
+     * Preenche committeeSequentialNumber e valuer em um detalhe de avaliação conforme permissões.
+     */
+    public static function enrichEvaluationDetailWithValuerInfo(
+        array &$detail,
+        Registration $registration,
+        EvaluationMethodConfiguration $emc,
+        RegistrationEvaluation $eval,
+        App $app
+    ): void {
+        $valuer_relation = $emc->getUserRelation($eval->user);
+        if ($valuer_relation) {
+            $detail['committeeSequentialNumber'] = $valuer_relation->getCommitteeSequentialNumber();
+        }
+
+        $user = $app->user;
+        if ($registration->opportunity->canUser('@control', $user)) {
+            $detail['valuer'] = $eval->user->profile->simplify('id,name,singleUrl');
+        } elseif ($emc->publishValuerNames) {
+            $detail['valuer'] = $eval->user->profile->simplify('id,name,singleUrl');
+        }
+    }
+
+    /**
+     * Backfill de committeeSequentialNumber por edital (firstPhase), mantendo o mesmo número por agent_id.
+     *
+     * @return array{opportunities: int, relations_updated: int}
+     */
+    public static function backfillCommitteeSequentialNumbers(App $app, ?int $first_phase_id = null): array
+    {
+        $conn = $app->em->getConnection();
+        $emc_repo = $app->repo('EvaluationMethodConfiguration');
+
+        if ($first_phase_id) {
+            $first_phase = $app->repo('Opportunity')->find($first_phase_id);
+            $first_phases = $first_phase ? [$first_phase] : [];
+        } else {
+            $emc_rows = $conn->fetchAllAssociative(
+                "SELECT DISTINCT ar.object_id AS emc_id FROM agent_relation ar
+                 WHERE ar.object_type = 'MapasCulturais\\Entities\\EvaluationMethodConfiguration'
+                 AND ar.status > 0"
+            );
+
+            $first_phases_by_id = [];
+            foreach ($emc_rows as $row) {
+                $emc = $emc_repo->find($row['emc_id']);
+                if (!$emc || !$emc->opportunity) {
+                    continue;
+                }
+                $fp = $emc->opportunity->firstPhase;
+                if ($fp && $fp->id) {
+                    $first_phases_by_id[$fp->id] = $fp;
+                }
+            }
+            $first_phases = array_values($first_phases_by_id);
+        }
+
+        $opportunities_processed = 0;
+        $relations_updated = 0;
+
+        foreach ($first_phases as $first_phase) {
+            $emc_ids = self::getEvaluationMethodConfigurationIdsForCommitteeSequentialNumber($first_phase);
+            if (!$emc_ids) {
+                continue;
+            }
+
+            $agents = [];
+            $max_number = 0;
+
+            foreach ($emc_ids as $emc_id) {
+                $relations = $conn->fetchAllAssociative(
+                    "SELECT ar.id, ar.metadata, ar.agent_id, ar.create_timestamp
+                     FROM agent_relation ar
+                     WHERE ar.object_type = 'MapasCulturais\\Entities\\EvaluationMethodConfiguration'
+                     AND ar.object_id = :emcId AND ar.status > 0",
+                    ['emcId' => $emc_id]
+                );
+
+                foreach ($relations as $relation) {
+                    $agent_id = (int) $relation['agent_id'];
+                    $metadata = json_decode($relation['metadata'] ?: '{}', true) ?: [];
+                    $number = isset($metadata['committeeSequentialNumber']) ? (int) $metadata['committeeSequentialNumber'] : null;
+
+                    if ($number && $number > $max_number) {
+                        $max_number = $number;
+                    }
+
+                    if (!isset($agents[$agent_id])) {
+                        $agents[$agent_id] = [
+                            'canonical' => null,
+                            'min_created_at' => $relation['create_timestamp'],
+                            'relations' => [],
+                        ];
+                    }
+
+                    $agents[$agent_id]['relations'][] = [
+                        'id' => (int) $relation['id'],
+                        'metadata' => $metadata,
+                    ];
+
+                    if ($relation['create_timestamp'] < $agents[$agent_id]['min_created_at']) {
+                        $agents[$agent_id]['min_created_at'] = $relation['create_timestamp'];
+                    }
+
+                    if ($number) {
+                        $canonical = $agents[$agent_id]['canonical'];
+                        if ($canonical === null || $number < $canonical) {
+                            $agents[$agent_id]['canonical'] = $number;
+                        }
+                    }
+                }
+            }
+
+            $unnumbered = [];
+            foreach ($agents as $agent_id => $data) {
+                if ($data['canonical'] === null) {
+                    $unnumbered[$agent_id] = $data['min_created_at'];
+                }
+            }
+
+            asort($unnumbered);
+            $next_number = $max_number + 1;
+            foreach (array_keys($unnumbered) as $agent_id) {
+                $agents[$agent_id]['canonical'] = $next_number++;
+            }
+
+            foreach ($agents as $data) {
+                $canonical = $data['canonical'];
+                foreach ($data['relations'] as $relation) {
+                    if (($relation['metadata']['committeeSequentialNumber'] ?? null) == $canonical) {
+                        continue;
+                    }
+                    $metadata = $relation['metadata'];
+                    $metadata['committeeSequentialNumber'] = $canonical;
+                    $conn->executeStatement(
+                        'UPDATE agent_relation SET metadata = :metadata WHERE id = :id',
+                        ['metadata' => json_encode($metadata), 'id' => $relation['id']]
+                    );
+                    $relations_updated++;
+                }
+            }
+
+            $opportunities_processed++;
+        }
+
+        return [
+            'opportunities' => $opportunities_processed,
+            'relations_updated' => $relations_updated,
+        ];
     }
 }

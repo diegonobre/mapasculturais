@@ -51,9 +51,9 @@ class Module extends \MapasCulturais\Module {
         });
 
         $app->hook('repo(Registration).getIdsByKeywordDQL.where', function (&$where, $keyword, $alias) use ($format_doc) {
-            $where .= "\n OR unaccent(lower(agent_coletivo.name)) LIKE unaccent(lower('$keyword'))";
-            $where .= "\n OR unaccent(lower(owner_nome.value)) LIKE unaccent(lower('$keyword'))";
-            $where .= "\n OR unaccent(lower(coletivo_nome.value)) LIKE unaccent(lower('$keyword'))";
+            $where .= "\n OR unaccent(lower(agent_coletivo.name)) LIKE unaccent(lower(:$alias))";
+            $where .= "\n OR unaccent(lower(owner_nome.value)) LIKE unaccent(lower(:$alias))";
+            $where .= "\n OR unaccent(lower(coletivo_nome.value)) LIKE unaccent(lower(:$alias))";
 
             if ($doc = $format_doc($keyword)) {
                 $doc2 = trim(str_replace(['%', '.', '/', '-'], '', $keyword));
@@ -62,8 +62,8 @@ class Module extends \MapasCulturais\Module {
             }
 
             if (str_contains($keyword, '@')) {
-                $where .= "\n OR lower(owner_email.value) LIKE lower('$keyword')";
-                $where .= "\n OR lower(coletivo_email.value) LIKE lower('$keyword')";
+                $where .= "\n OR lower(owner_email.value) LIKE lower(:$alias)";
+                $where .= "\n OR lower(coletivo_email.value) LIKE lower(:$alias)";
             }
         });
 
@@ -78,6 +78,27 @@ class Module extends \MapasCulturais\Module {
                             t
                         WITH
                             t.taxonomy = '{$taxonomy->slug}'";
+        });
+
+        //faz a keyword buscar pelo CNPJ, Razão Social,nome da organização
+        $app->hook('repo(agent).getIdsByKeywordDQL.join', function (&$joins, $keyword, $alias) use($app) {
+            if($app->user->is('admin')){
+                $joins .= "\n LEFT JOIN e.__metadata cnpj_meta WITH cnpj_meta.key = 'cnpj'";
+                $joins .= "\n LEFT JOIN e.__metadata nomeCompleto_meta WITH nomeCompleto_meta.key = 'nomeCompleto'";
+            }
+        });
+        
+          //faz a keyword buscar pelo CNPJ, Razão Social,nome da organização
+        $app->hook('repo(agent).getIdsByKeywordDQL.where', function (&$where, $keyword, $alias) use ($format_doc,$app) {
+            if($app->user->is('admin')){
+                if ($doc = $format_doc($keyword)) {
+                    $unformattedDoc = trim(str_replace(['.', '-', '/', ' '], '', $keyword));
+                    $where .= "\n OR cnpj_meta.value = '{$doc}' OR cnpj_meta.value = '{$unformattedDoc}'";
+                }
+    
+                $where .= "\n OR unaccent(lower(nomeCompleto_meta.value)) LIKE unaccent(lower(:$alias))";
+            }
+            
         });
 
         $app->hook('repo(<<agent|space|event|project|opportunity>>).getIdsByKeywordDQL.where', function (&$where, $keyword, $alias) {

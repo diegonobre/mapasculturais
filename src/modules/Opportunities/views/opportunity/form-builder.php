@@ -2,7 +2,8 @@
 use MapasCulturais\i;
 $this->layout = 'entity';
 
-$this->addOpportunityBreadcramb(i::__('Configuração do formulário'));
+
+$this->addOpportunityBreadcramb(i::__('Configuração do formulário'), $entity);
 
 $this->import('
     entity-actions
@@ -19,7 +20,7 @@ $this->import('
     <mc-breadcrumb></mc-breadcrumb>
     <opportunity-header :opportunity="entity.parent || entity">
         <template #button>
-            <mc-link class="button button--primary-outline" :entity="entity.parent || entity" route="edit" hash="config" icon="arrow-left"><?= i::__("Voltar") ?></mc-link>
+            <mc-link class="button button--primary-outline button--icon" :entity="entity.parent || entity" route="edit" hash="config" icon="arrow-left"><?= i::__("Voltar") ?></mc-link>
         </template>
     </opportunity-header>
 

@@ -9,6 +9,7 @@ use MapasCulturais\i;
 $this->import('
     mc-avatar
     mc-confirm-button
+    mc-status
 ');
 ?>
 <div :class="['registration-card', {'border': hasBorder}, {'picture': pictureCard}]">
@@ -81,9 +82,9 @@ $this->import('
                 <?php endif ?>
 
                 <?php if($app->config['app.registrationCardFields']['coletive']): ?>
-                    <div v-if="entity?.agentRelations?.coletivo" class="registerData">
+                    <div v-if="collectiveName" class="registerData">
                         <p class="title"> <?= $this->text('coletive-label',i::__('Nome coletivo')) ?></p>
-                        <p class="data"> {{entity?.agentRelations?.coletivo[0].agent.nomeCompleto}} </p>
+                        <p class="data"> {{collectiveName}} </p>
                     </div>
                 <?php endif ?>
             </div>
@@ -96,9 +97,10 @@ $this->import('
             <?php if($app->config['app.registrationCardFields']['status']): ?>
                 <div v-if="!pictureCard" class="registerData">
                     <p class="title"> <?= $this->text('status-label',i::__('Status')) ?> </p>
-                    <div class="status-point">
+                    <mc-status :status-name="status"></mc-status>
+                    <!-- <div class="status-point">
                         <div class="point"></div><p class="data"> {{status}} </p>
-                    </div>
+                    </div> -->
                 </div>
             <?php endif ?>
             <slot name="entity-actions-left" :entity="entity"></slot>

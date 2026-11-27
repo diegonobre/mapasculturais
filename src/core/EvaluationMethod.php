@@ -10,24 +10,219 @@ use MapasCulturais\Entities\Opportunity;
 use MapasCulturais\Entities\Registration;
 use MapasCulturais\Entities\User;
 
+/**
+ * Classe base para métodos de avaliação de inscrições
+ * 
+ * @property-read string $slug Identificador único do método de avaliação
+ * @property-read string $name Nome do método de avaliação
+ * @property-read string $description Descrição do método de avaliação
+ * @property-read array  $defaultStatuses Status padrão da fase de avaliação
+ * @property-read string $hookPrefix Prefixo para hooks deste método
+ * 
+ * @package MapasCulturais
+ */
 abstract class EvaluationMethod extends Module implements \JsonSerializable{
     abstract protected function _register();
 
     abstract function enqueueScriptsAndStyles();
 
+    /**
+     * Retorna o slug do método
+     * @return string
+     */
     abstract function getSlug();
+
+    /**
+     * Retorna o nome do método
+     * @return string
+     */
     abstract function getName();
+
+    /**
+     * Retorna a descrição do método
+     * @return string
+     */
     abstract function getDescription();
+
+    /**
+     * Exporta as configurações de uma fase de avaliação
+     * @return array 
+     */
+    abstract protected function _export(EvaluationMethodConfiguration $evaluation_method_configuration): array;
+
+    /**
+     * Importa as configurações de uma fase de avaliação
+     * @return array 
+     */
+    abstract protected function _import(EvaluationMethodConfiguration $evaluation_method_configuration, array $data);
     
     abstract protected function _valueToString($value);
 
     abstract protected function _getConsolidatedResult(Entities\Registration $registration, array $evaluations);
+
+    abstract protected function _getConsolidatedAutoApplicationResult(Entities\Registration $registration);
+
+    /**
+     * Retorna o resultado da avaliação
+     * @param Entities\RegistrationEvaluation $evaluation
+     * @return mixed
+     */
     abstract function getEvaluationResult(Entities\RegistrationEvaluation $evaluation);
 
+    /**
+     * Retorna os detalhes de uma avaliação (implementação dependente do método)
+     */
     abstract function _getEvaluationDetails(Entities\RegistrationEvaluation $evaluation): ?array;
+
+    /**
+     * Retorna os detalhes consolidados de uma inscrição (implementação dependente do método)
+     */
     abstract function _getConsolidatedDetails(Entities\Registration $registration): ?array;
 
+    /**
+     * Retorna os status padrão (implementação dependente do método)
+     */
+    protected abstract function _getDefaultStatuses(EvaluationMethodConfiguration $evaluation_method_configuration): array;
 
+    /**
+     * Retorna o prefixo para hooks deste método
+     * @return string
+     */
+    public function getHookPrefix(): string
+    {
+        return "evaluationMethod({$this->slug})";
+    }
+
+    /**
+     * Retorna os IDs das inscrições aptas a receber a aplicação de um resultado.
+     *
+     * A busca considera apenas inscrições da oportunidade informada, com os números
+     * solicitados, em status válidos e com status diferente do que será aplicado.
+     *
+     * @param Opportunity $opportunity Oportunidade à qual as inscrições pertencem
+     * @param string[] $registration_numbers Números das inscrições a serem filtradas
+     * @param int $new_status Status que será aplicado às inscrições encontradas
+     * @return int[] IDs das inscrições aptas
+     */
+    public function findRegistrationIdsForResultApplication(
+        Opportunity $opportunity,
+        array $registration_numbers,
+        int $new_status
+    ): array {
+        $registration_numbers = array_values(array_unique(array_filter(array_map(
+            fn ($number) => is_string($number) ? trim($number) : '',
+            $registration_numbers
+        ))));
+
+        if (!$registration_numbers) {
+            return [];
+        }
+
+        $status_in = API::IN([
+            Registration::STATUS_SENT,
+            Registration::STATUS_NOTAPPROVED,
+            Registration::STATUS_WAITLIST,
+            Registration::STATUS_APPROVED,
+        ]);
+        $status_not_equal = API::NOT_EQ($new_status);
+        $query = new ApiQuery(Registration::class, [
+            '@select' => 'id',
+            'opportunity' => API::EQ($opportunity->id),
+            'number' => API::IN($registration_numbers),
+            'status' => "AND($status_not_equal, $status_in)",
+        ]);
+
+        return $query->findIds();
+    }
+
+    /**
+     * Exporta as configurações do método para array
+     * 
+     * @param EvaluationMethodConfiguration $evaluation_method_configuration
+     * @return array
+     */
+    public function export(EvaluationMethodConfiguration $evaluation_method_configuration): array
+    {
+        $app = App::i();
+
+        $app->applyHookBoundTo($evaluation_method_configuration, "{$this->hookPrefix}.export:before");
+        
+        $result = $this->_export($evaluation_method_configuration);
+        
+        $app->applyHookBoundTo($evaluation_method_configuration, "{$this->hookPrefix}.export:after", [&$result]);
+
+        return $result;
+    }
+
+    /**
+     * Importa as configurações do método a partir de um array
+     * 
+     * @param EvaluationMethodConfiguration $evaluation_method_configuration
+     * @param array $data
+     * @return void
+     */
+    public function import(EvaluationMethodConfiguration $evaluation_method_configuration, array $data)
+    {
+        $app = App::i();
+
+        $app->applyHookBoundTo($evaluation_method_configuration, "{$this->hookPrefix}.import:before", [&$data]);
+        
+        $this->_import($evaluation_method_configuration, $data);
+        
+        $app->applyHookBoundTo($evaluation_method_configuration, "{$this->hookPrefix}.import:after", [&$data]);
+    }
+
+    /**
+     * Retorna os status padrão da fase de avaliação
+     * 
+     * @return array
+     */
+    public function getDefaultStatuses(EvaluationMethodConfiguration $evaluation_method_configuration): array {
+        $app = App::i();
+        $config_key = $this->getDefaultStatusesConfigKey($evaluation_method_configuration);
+        $config = $app->config[$config_key] ?? [];
+        $statuses = $config ?: $this->_getDefaultStatuses($evaluation_method_configuration);
+
+        $app->applyHookBoundTo($this, "opportunityPhase({$this->slug}).defaultStatuses", [&$statuses]);
+
+        return $statuses;
+    }
+
+    /**
+     * Retorna a chave de configuração para os status padrão
+     * 
+     * @param EvaluationMethodConfiguration $evaluation_method_configuration
+     * @return string
+     */
+    public function getDefaultStatusesConfigKey(EvaluationMethodConfiguration $evaluation_method_configuration): string {
+        return "opportunityPhase.defaultStatuses.{$evaluation_method_configuration->slug}";
+    }
+
+    /**
+     * Retorna os status que o avaliador pode atribuir, conforme a configuração de status da fase
+     * 
+     * @param EvaluationMethodConfiguration $evaluation_method_configuration
+     * @return array [status => label]
+     */
+    public function getEvaluatorStatuses(EvaluationMethodConfiguration $evaluation_method_configuration): array {
+        $status_labels = $evaluation_method_configuration->opportunity->statusLabels ?: $evaluation_method_configuration->defaultStatuses;
+
+        $statuses = [];
+        foreach ($status_labels as $status => $label) {
+            if (!in_array((int) $status, [Registration::STATUS_DRAFT, Registration::STATUS_SENT], true)) {
+                $statuses[$status] = $label;
+            }
+        }
+
+        return $statuses;
+    }
+
+
+    /**
+     * Retorna a próxima data e hora para redistribuição de inscrições
+     * 
+     * @return \DateTime
+     */
     static function getNextRedistributionDateTime(): \DateTime {
         $app = App::i();
         $str_time = date($app->config['registrations.distribution.dateString']) . ' ' . $app->config['registrations.distribution.incrementString'];
@@ -35,6 +230,13 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         return $datetime;
     }
 
+    /**
+     * Compara dois valores de resultado
+     * 
+     * @param mixed $value1
+     * @param mixed $value2
+     * @return int
+     */
     public function cmpValues($value1, $value2){
         if($value1 > $value2){
             return 1;
@@ -64,6 +266,13 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         return [];
     }
 
+    /**
+     * Retorna a configuração do relatório para este método
+     * 
+     * @param Opportunity $opportunity
+     * @param bool $call_hooks
+     * @return array
+     */
     function getReportConfiguration($opportunity, $call_hooks = true){
         $app = App::i();
 
@@ -164,10 +373,22 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
     }
 
 
+    /**
+     * Converte o resultado de uma avaliação para string
+     * 
+     * @param Entities\RegistrationEvaluation $evaluation
+     * @return string
+     */
     function evaluationToString(Entities\RegistrationEvaluation $evaluation){
         return $this->valueToString($evaluation->result);
     }
 
+    /**
+     * Converte um valor de resultado para string
+     * 
+     * @param mixed $value
+     * @return string
+     */
     function valueToString($value) {
         if($value == '@tiebreaker'){
             return i::__('Aguardando desempate');
@@ -184,7 +405,11 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
     function getTiebreakerEvaluation(Entities\Registration $registration) {
         $app = App::i();
 
-        $tiebreaker_evaluations = $app->repo('RegistrationEvaluation')->findOneBy(['registration' => $registration, 'isTiebreaker' => true]);
+        $tiebreaker_evaluations = $app->repo('RegistrationEvaluation')->findOneBy([
+            'registration' => $registration,
+            'isTiebreaker' => true,
+            'status' => RegistrationEvaluation::STATUS_SENT
+        ]);
 
         if(empty($tiebreaker_evaluations)){
             return null;
@@ -206,10 +431,6 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         $registration->checkPermission('viewConsolidatedResult');
         $evaluations = $app->repo('RegistrationEvaluation')->findBy(['registration' => $registration, 'status' => RegistrationEvaluation::STATUS_SENT]);
 
-        if(empty($evaluations)){
-            return 0;
-        }
-
         $committees = $registration->getCommittees();
 
         $result = '';
@@ -225,19 +446,119 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
             }
         } else {
             $number_of_valuers = 0;
-            foreach($committees as $users){
+            $all_evaluations_sent = true;
+
+            foreach($committees as $committee_name => $users) {
                 $number_of_valuers += count($users);
+
+                foreach($users as $user) {
+                    $evaluation = $app->repo('RegistrationEvaluation')->findOneBy(['registration' => $registration, 'user' => $user, 'status' => RegistrationEvaluation::STATUS_SENT]);
+                    if(empty($evaluation)){
+                        $all_evaluations_sent = false;
+                        break;
+                    }
+                }
             }
 
-            if(count($evaluations) < $number_of_valuers){
-                $result =  0;
+            if($all_evaluations_sent || $registration->status > 1) {
+                $result = $this->_getConsolidatedResult($registration, $evaluations);
             }
-            
-            $result =  $this->_getConsolidatedResult($registration, $evaluations);
         }
 
         return $result;
     }
+
+    /**
+     * Retorna se o método de avaliação deve auto-aplicar os resultados
+     *
+     * @return boolean
+     */
+    function useAutoApplication(): bool
+    {
+        return true;
+    }
+    
+    /**
+     * Aplica o resultado consolidado de uma avaliação na inscrição, alterando seu status
+     *
+     * @param Entities\Registration $registration
+     * @param int|null $status_force
+     * @return boolean
+     */
+    function applyConsolidatedResult(Entities\Registration $registration, $status_force = null): bool
+    {
+        $app = App::i();
+
+        if(!$this->useAutoApplication() || !$registration) {
+            return false;
+        }
+
+        $opportunity = $registration->opportunity;
+
+        // $evaluation_type = $registration->evaluationMethod->slug;
+
+        if ($registration->needsTiebreaker() && !$registration->evaluationMethod->getTiebreakerEvaluation($registration)) {
+            return false;
+        }
+
+        $conn = $app->em->getConnection();
+        $evaluations = $conn->fetchAll(
+            "
+                SELECT
+                   *
+                FROM
+                    evaluations
+                WHERE
+                    registration_id = {$registration->id}"
+        );
+
+        $all_status_sent = true;
+        foreach ($evaluations as $evaluation) {
+            if ($evaluation['valuer_committee'] === '@tiebreaker') {
+                continue;
+            }
+
+            if ($this->slug == 'continuous') {
+                if (!$evaluation['evaluation_id']) {
+                    $all_status_sent = false;
+                    break;
+                }
+            } else {
+                if ($evaluation['evaluation_status'] != RegistrationEvaluation::STATUS_SENT) {
+                    $all_status_sent = false;
+                    break;
+                }
+            }
+        }
+
+        if ($all_status_sent) {
+            $value = $this->getConsolidatedAutoApplicationResult($registration, $status_force);
+
+            $app->disableAccessControl();
+            $registration->setStatus($value);
+            $registration->save();
+            $app->enableAccessControl();
+        }
+        
+        return true;
+    }
+
+    /**
+     * Retorna o resultado da auto-aplicação consolidada
+     * 
+     * @param Registration $registration
+     * @param int|null $status_force
+     * @return mixed
+     */
+    public function getConsolidatedAutoApplicationResult(Registration $registration, $status_force = null)
+    {
+        $app = App::i();
+        $result = $this->_getConsolidatedAutoApplicationResult($registration, $status_force);
+        $app->applyHookBoundTo($this, "evaluationMethod({$this->slug}).consolidatedAutoApplicationResult", [&$result]);
+        return $result;
+    }
+    
+    
 
     /**
      * Retorna os detalhes de uma avaliação
@@ -250,6 +571,17 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         $result = $this->_getEvaluationDetails($evaluation);
         $app->applyHookBoundTo($evaluation, "{$evaluation->hookPrefix}.details", [&$result]);
         return $result;
+    }
+
+    /**
+     * Retorna se os detalhes de uma avaliação pode ou não serem exibidos
+     *
+     * @param Registration $registration
+     * @return boolean
+     */
+    function shouldDisplayEvaluationResults(Registration $registration): bool
+    {
+        return $registration->opportunity->publishedRegistrations && $registration->opportunity->evaluationMethodConfiguration->publishEvaluationDetails;
     }
 
     /**
@@ -367,9 +699,6 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         if($not_sent_evaluations) {
             $app->rcache->save($cache_key, false);
 
-            // if($registration->id == 1134470122) {
-            //     eval(\psy\sh());
-            // }
             return false;
         }
 
@@ -404,11 +733,8 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         return $result;
     }
 
-    public function redistributeRegistrations(Entities\Opportunity $opportunity) {
-        ini_set('max_execution_time', 0);
-        $start_time = microtime(true);
-
-        $app = App::i();
+    public function saveDistributionLog(Entities\Opportunity $opportunity, string $log)
+    {
         $evaluation_config = $opportunity->evaluationMethodConfiguration;
 
         $log_path = PUBLIC_PATH . "files/distributionslog/";
@@ -417,15 +743,125 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         }
         $log_filename = "$log_path/{$evaluation_config->id}.log";
 
+        file_put_contents($log_filename, $log);
+    }
+
+    /**
+     * Calcula a distribuição de quotas de avaliações por avaliador para uma comissão
+     * 
+     * Regras:
+     * 1. Avaliadores com limite (maxRegistrations) recebem até o limite
+     * 2. Avaliadores sem limite dividem o restante igualmente
+     * 3. Se houver resto na divisão, distribui 1 a mais para os primeiros
+     * 
+     * @param array $users Lista de usuários avaliadores
+     * @param int $total_registrations Total de inscrições na comissão
+     * @param int $max_valuers Máximo de avaliadores por inscrição
+     * @param array $registrations_per_valuer Limites por avaliador [user_id => max]
+     * @return array [user_id => quota_de_avaliações]
+     */
+    private function calculateDistributionQuotas(array $users, int $total_registrations, ?int $max_valuers, array $registrations_per_valuer): array {
+        $total_evaluations_needed = $total_registrations * $max_valuers;
+        $quotas = [];
+        $remaining = $total_evaluations_needed;
+        
+        // Passo 1: Aloca o máximo para quem tem limite configurado
+        foreach ($users as $user) {
+            $max = $registrations_per_valuer[$user->id] ?? null;
+            if ($max !== null && $max > 0) {
+                // O limite não pode ser maior que o total de inscrições
+                $allocation = min($max, $total_registrations);
+                $quotas[$user->id] = $allocation;
+                $remaining -= $allocation;
+            } else {
+                $quotas[$user->id] = 0;
+            }
+        }
+        
+        // Passo 2: Distribui o restante entre quem não tem limite
+        $users_without_limit = array_filter($users, function($user) use ($registrations_per_valuer) {
+            $max = $registrations_per_valuer[$user->id] ?? null;
+            return $max === null || $max === 0;
+        });
+        
+        if (count($users_without_limit) > 0 && $remaining > 0) {
+            $base = intdiv($remaining, count($users_without_limit));
+            $extra = $remaining % count($users_without_limit);
+            
+            // Embaralha para aleatoriedade no desempate
+            shuffle($users_without_limit);
+            
+            $i = 0;
+            foreach ($users_without_limit as $user) {
+                $quotas[$user->id] = $base + ($i < $extra ? 1 : 0);
+                $i++;
+            }
+        }
+        
+        return $quotas;
+    }
+
+    public function redistributeRegistrations(Entities\Opportunity $opportunity) {        
+        ini_set('max_execution_time', 0);
+        $start_time = microtime(true);
+
+        $app = App::i();
+
+        $is_log_active = $app->config['app.log.evaluations'];
+
+        $evaluation_config = $opportunity->evaluationMethodConfiguration;
+
+        // Permite que temas e plugins especializem somente a ordem dos avaliadores.
+        // Sem um callable, ou quando ele retorna null, o balanceamento por quotas permanece inalterado.
+        $distribution_comparator = null;
+        $app->applyHookBoundTo($this, 'evaluationMethod.distributionComparator', [&$distribution_comparator, $opportunity]);
+
         /** @var Connection */
         $conn = $app->em->getConnection();
 
         /** @var Repositories\Registration */
         $repo = $app->repo('Registration');
+        
 
         $committees = $this->getCommitteeGroups($opportunity->evaluationMethodConfiguration);
 
         $ignore_started_evaluations = $evaluation_config->ignoreStartedEvaluations;
+
+        /** 
+         * Limimte de inscrições por avaliador nas comissões 
+         * @var int[][]
+         **/
+        $registrations_per_valuer = [];
+
+        /** 
+         * Lista de inscrições por avaliador nas comissões 
+         * @var array[][]
+         **/
+        $registration_lists_per_valuer = [];
+
+        /** 
+         * Flag exclusivo da lista de inscrições por avaliador nas comissões 
+         * @var bool[][]
+         **/
+        $registration_list_exclusive_per_valuer = [];
+
+        // Conta somente as atribuições criadas nesta redistribuição. Avaliações já existentes
+        // continuam preservadas pelo fluxo abaixo, mas não entram neste contador separado.
+        $pending_assignments_count = [];
+
+        foreach($evaluation_config->getAgentRelationsGrouped() as $committee => $agent_relations) {
+            $registrations_per_valuer[$committee] = $registrations_per_valuer[$committee] ?? [];
+            $registration_lists_per_valuer[$committee] = $registration_lists_per_valuer[$committee] ?? [];
+            $registration_list_exclusive_per_valuer[$committee] = $registration_list_exclusive_per_valuer[$committee] ?? [];
+            
+            foreach($agent_relations as $agent_relation) {
+                $user_id = $agent_relation->agent->user->id;
+                $registrations_per_valuer[$committee][$user_id] = $agent_relation->maxRegistrations;
+                $registration_lists_per_valuer[$committee][$user_id] = $agent_relation->registrationList;
+                $registration_list_exclusive_per_valuer[$committee][$user_id] = $agent_relation->registrationListExclusive;
+            }
+        }
+
 
         /** Limite de avaliadores por inscrição
          * @var array */
@@ -448,11 +884,27 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         /** 
          * Número de inscrições que cada avaliador tem por comissão
          * @var array */
-        $valuers_registrations_count = [];
+        $valuers_committee_registrations_count = [];
+
+        /**
+         * Número total de avaliações que cada avaliador tem
+         * @var integer[]
+         */
+        $valuers_total_registrations_count = [];
+
+
+        /**
+         * Número total de avaliações de cada comitê
+         * @var integer[]
+         */
+        $committee_evaluations_count = [];
+
         foreach($committees as $committee_name => $valuers) {
-            $valuers_registrations_count[$committee_name] = [];
+            $committee_evaluations_count[$committee_name] = 0;
+            $valuers_committee_registrations_count[$committee_name] = [];
             foreach($valuers as $user) {
-                $valuers_registrations_count[$committee_name][$user->id] = 0;
+                $valuers_committee_registrations_count[$committee_name][$user->id] = 0;
+                $valuers_total_registrations_count[$user->id] = 0;
             }
         }
 
@@ -485,35 +937,112 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         $opportunity->registerRegistrationMetadata();
 
         // obtém a lista de inscrições e das avaliações já feitas
+        // Query corrigida: usa apenas um LEFT JOIN para evitar duplicatas
+        // Inscrições isentas por selos (seal_exemption_status = 'granted') são excluídas
+        // da distribuição — não devem receber avaliadores nem aparecer na workload.
         $sql = "
                 SELECT 
                     r.id, 
-                    r.number, 
+                    r.number,
+                    r.status, 
                     r.valuers,
                     r.valuers_exceptions_list,
                     v.user_id,
                     v.is_tiebreaker,
                     v.committee,
-                    count(e.id) AS num 
+                    v.status AS evaluation_status,
+                    count(v.id) AS num 
                 FROM 
                     registration r 
-                LEFT JOIN 
-                    registration_evaluation e ON e.registration_id = r.id
                 LEFT JOIN 
                     registration_evaluation v ON v.registration_id = r.id
                 WHERE 
                     opportunity_id = {$opportunity->id} AND
-                    r.status = 1
-
+                    r.status > 0 AND
+                    r.seal_exemption_status IS DISTINCT FROM 'granted'
                 GROUP BY r.id, v.id
-                ORDER BY num ASC
+                ORDER BY num ASC, r.id ASC
             ";
 
         /**
          * Lista de inscrições que devem ser distribuidas 
          * @var array */
-        $registration_evaluations = $conn->fetchAllAssociative($sql);
+        $registration_evaluations_raw = $conn->fetchAllAssociative($sql);
 
+        /**
+         * Avaliações já existentes por inscrição (uma linha por avaliador na query acima)
+         * @var array<int, array<int, array{user_id: int, committee: string, status: int}>>
+         */
+        $existing_evaluations_by_registration = [];
+        foreach ($registration_evaluations_raw as $row) {
+            if (empty($row['user_id'])) {
+                continue;
+            }
+
+            $registration_id = (int) $row['id'];
+            $user_id = (int) $row['user_id'];
+
+            if (isset($existing_evaluations_by_registration[$registration_id][$user_id])) {
+                continue;
+            }
+
+            $existing_evaluations_by_registration[$registration_id][$user_id] = [
+                'user_id' => $user_id,
+                'committee' => $row['committee'],
+                'status' => (int) ($row['evaluation_status'] ?? 0),
+            ];
+        }
+        
+        // Remove duplicatas da query (que retorna uma linha por avaliação existente)
+        // Mantém apenas a primeira ocorrência de cada inscrição
+        $registration_evaluations = [];
+        $seen_ids = [];
+        foreach($registration_evaluations_raw as $reg) {
+            if(!isset($seen_ids[$reg['id']])) {
+                $seen_ids[$reg['id']] = true;
+                $registration_evaluations[] = $reg;
+            }
+        }
+        
+        /**
+         * Quotas de avaliações por comissão e avaliador
+         * [committee_name => [user_id => quota]]
+         * @var array */
+        $committee_quotas = [];
+        
+        // Calcula as quotas de distribuição para cada comissão
+        foreach($committees as $committee_name => $users) {
+            $max_valuers = $valuers_per_registration->$committee_name ?? null;
+            if(!$max_valuers) {
+                continue;
+            }
+            
+            // Conta quantas inscrições esta comissão deve avaliar
+            $committee_registrations_count = 0;
+            foreach($registration_evaluations as $reg) {
+                if($reg['status'] != 1) {
+                    continue;
+                }
+                $registration = $repo->find($reg['id']);
+                if($registration && $this->mustBeEvaluatedByCommittee($evaluation_config, $registration, $committee_name)) {
+                    $committee_registrations_count++;
+                }
+            }
+            
+            if($committee_registrations_count > 0) {
+                $committee_quotas[$committee_name] = $this->calculateDistributionQuotas(
+                    $users,
+                    $committee_registrations_count,
+                    $max_valuers,
+                    $registrations_per_valuer[$committee_name] ?? []
+                );
+                
+                if($is_log_active) {
+                    $app->log->debug("Comitê {$committee_name}: {$committee_registrations_count} inscrições × {$max_valuers} = " . ($committee_registrations_count * $max_valuers) . " avaliações, quotas: " . json_encode($committee_quotas[$committee_name]));
+                }
+            }
+        }
+        
         /** Número de verificações
          * @var int */
         $total_checks = count($registration_evaluations) * $number_of_valuers;
@@ -531,46 +1060,61 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
             // inicializa a contagem de avaliadores das inscrições
             $registration_valuers_count[$registration->id] = $registration_valuers_count[$registration->id] ?? [];
             foreach(array_keys($committees) as $committee_name) {
-                $registration_valuers_count[$registration->id][$committee_name] = $registration_valuers_count[$registration->id][$committee_name] ?? 0;
+                $num = $registration_valuers_count[$registration->id][$committee_name] ?? 0;
+                $registration_valuers_count[$registration->id][$committee_name] = $num;
             }
             
-            // caso a inscrição já tenha sido avaliada
-            if($registration->user_id){
-                $committee_name = $registration->committee;
-                $user_id = $registration->user_id;
+            // preserva todas as avaliações já existentes na distribuição
+            foreach ($existing_evaluations_by_registration[$registration->id] ?? [] as $existing_evaluation) {
+                $committee_name = $existing_evaluation['committee'];
+                $user_id = $existing_evaluation['user_id'];
+                $evaluation_status = $existing_evaluation['status'];
+
+                if (!$committee_name) {
+                    continue;
+                }
 
                 $result[$registration->id][$user_id] = $committee_name;
 
-                // se a configuração `Desconsiderar as avaliações já feitas na distribuição` estiver desativada
-                if(!($ignore_started_evaluations->$committee_name ?? false)) {
-                    // atualiza o número de avaliadores da inscrição
-                    $valuers_registrations_count[$committee_name][$user_id] = $valuers_registrations_count[$committee_name][$user_id] ?? 0;
-                    $valuers_registrations_count[$committee_name][$user_id]++;
+                $counts_toward_distribution = !($ignore_started_evaluations->$committee_name ?? false)
+                    || $evaluation_status >= RegistrationEvaluation::STATUS_EVALUATED;
+
+                if ($counts_toward_distribution) {
+                    $valuers_committee_registrations_count[$committee_name][$user_id] = ($valuers_committee_registrations_count[$committee_name][$user_id] ?? 0) + 1;
+                    $valuers_total_registrations_count[$user_id] = ($valuers_total_registrations_count[$user_id] ?? 0) + 1;
                 }
 
-                $registration_valuers_count[$registration->id][$committee_name] = $registration_valuers_count[$registration->id][$committee_name] ?? 0;
+                $registration_valuers_count[$registration->id][$committee_name] = ($registration_valuers_count[$registration->id][$committee_name] ?? 0) + 1;
+            }
 
-                // incrementa o número de avaliações que a inscrição tem por comissão
-                $registration_valuers_count[$registration->id][$committee_name]++;
+            // define o total de avaliações já feitas para cada inscrição
+            $registration_valuers_count[$registration->id]['@TOTAL'] = 0;
+            foreach($registration_valuers_count[$registration->id] as $committee_name => $num) {
+                $registration_valuers_count[$registration->id]['@TOTAL'] += $num;
             }
         }
 
+        // 1ª passagem: aplica todas as inclusões manuais antes de preencher o restante.
+        // Assim a carga entra em $pending_assignments_count e o comparador customizado
+        // enxerga o desequilíbrio mesmo se a ordem das inscrições variar (empate em num).
         foreach($registration_evaluations as &$registration) {
-            $registration_entity = null;
+            $include_list = $registration->valuers_exceptions_list->include ?? [];
+            if(!count($include_list)) {
+                continue;
+            }
 
-            // adiciona os usuários da lista de inclusões (valuers_exceptions_list->include)
-            foreach($registration->valuers_exceptions_list->include as $user_id) {
+            foreach($include_list as $user_id) {
                 // se o usuário já é avaliador da inscrição, não precisa adicionar
                 if(isset($result[$registration->id][$user_id])) {
                     continue;
                 }
 
-                /** 
+                /**
                  * Lista de comissões que o usuário está
-                 * @var array 
+                 * @var array
                  **/
                 $user_committees = [];
-                
+
                 // encontra em quais comissões o usuário está
                 foreach($committees as $committee_name => $users) {
                     if(in_array($user_id, array_map(fn($user) => $user->id, $users))) {
@@ -586,44 +1130,170 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
                     $result[$registration->id][$user_id] = $committee_name;
 
                     // atualiza o número de avaliadores da inscrição
-                    $valuers_registrations_count[$committee_name][$user_id]++;
+                    $valuers_committee_registrations_count[$committee_name][$user_id]++;
+
+                    // Inclusões manuais também compõem a carga pendente da rodada.
+                    $pending_assignments_count[$committee_name][$user_id] =
+                        ($pending_assignments_count[$committee_name][$user_id] ?? 0) + 1;
 
                     // incrementa o número de avaliações que a inscrição tem por comissão
                     $registration_valuers_count[$registration->id][$committee_name]++;
+
+                    // incrementa o número total de avaliações que o avaliador tem
+                    $valuers_total_registrations_count[$user_id]++;
                 }
+            }
+        }
+        unset($registration);
+
+        // 2ª passagem: completa as vagas restantes com o balanceamento / comparador
+        foreach($registration_evaluations as &$registration) {
+            $registration_entity = null;
+
+            $include_list = $registration->valuers_exceptions_list->include ?? [];
+
+            if($registration->status > 1 && !count($include_list)) {
+                continue;
             }
 
             // passa por cada comissão adicionando os avaliadores até o limite de avaliadores por inscrição configurado na comissão
             foreach($committees as $committee_name => $users) {
+                // Garante que $app está disponível no escopo
+                $app = App::i();
+                $max_valuers = $valuers_per_registration->$committee_name ?? null;
+                // se a comissão tem limite de avaliadores por inscrição e esse limite já foi atingido, não adiociona
+                    
                 $percent = round(($checks_count / $total_checks) * 100, 1);
-                if($app->config['app.log.evaluations']) {
+                if($is_log_active) {
                     // imprime a porcentagem de verificações
                     $app->log->debug("[$percent%] $registration->number - $checks_count de $total_checks");
                 }
 
-                file_put_contents($log_filename, "$percent%");
+                $this->saveDistributionLog($opportunity, "$percent%");
 
                 if($committee_name == '@tiebreaker') {
                     $registration_entity = $registration_entity ?: $repo->find($registration->id);
 
-                    if($this->registrationNeedsTiebreaker($registration_entity)) {
-                        $app->log->debug("Registration:: {$registration->id} precisando de DESEMPATE");
-                    } else {
+                    if(!$this->registrationNeedsTiebreaker($registration_entity)) {
                         continue;
+                    }
+
+                    if($is_log_active) {
+                        $app->log->debug("Registration:: {$registration->id} precisando de DESEMPATE");
                     }
                 }
 
-                $committee_valuers_count = $valuers_registrations_count[$committee_name];
+                // usort do PHP é instável: empates (incl. comparator customizado retornando 0)
+                // precisam preservar a ordem original da comissão via índice.
+                $users_with_index = [];
+                foreach ($users as $index => $user) {
+                    $users_with_index[] = (object) ['user' => $user, 'index' => $index];
+                }
 
-                // ordena os usuarios pelos que tem menos avaliações na comissão
-                usort($users, fn($u1, $u2) => $committee_valuers_count[$u1->id] <=> $committee_valuers_count[$u2->id]);
+                usort($users_with_index, function($item1, $item2) use ($registration, $registration_lists_per_valuer, $registration_list_exclusive_per_valuer, $committee_name, $valuers_committee_registrations_count, $committee_quotas, $distribution_comparator, $pending_assignments_count) {
+                    $u1 = $item1->user;
+                    $u2 = $item2->user;
+                    $registration_number = $registration->number;
 
+                    $list1 = $registration_lists_per_valuer[$committee_name][$u1->id] ?? [];
+                    $list2 = $registration_lists_per_valuer[$committee_name][$u2->id] ?? [];
+
+                    $exclusive1 = $registration_list_exclusive_per_valuer[$committee_name][$u1->id] ?? false;
+                    $exclusive2 = $registration_list_exclusive_per_valuer[$committee_name][$u2->id] ?? false;
+
+                    $priority1 = 0;
+                    $priority2 = 0;
+
+                    // Se o avaliador 1 tem a inscrição na lista, ele ganha prioridade (ainda maior se marcado como exclusivo).
+                    if($list1 && in_array($registration_number, $list1)) {
+                        $priority1 = 1 + ($exclusive1 ? 2 : 0);
+                    }
+
+                    // Se o avaliador 2 tem a inscrição na lista, ele ganha prioridade (ainda maior se marcado como exclusivo).
+                    if($list2 && in_array($registration_number, $list2)) {
+                        $priority2 = 1 + ($exclusive2 ? 2 : 0);
+                    }
+
+                    // Quem tiver prioridade maior vem antes; em empate, segue as quotas.
+                    if($priority1 !== $priority2) {
+                        return $priority2 <=> $priority1;
+                    }
+
+                    // O comparador personalizado atua depois das prioridades de lista. Ao retornar
+                    // null, delega a decisão para a ordenação por quotas já existente no core.
+                    // Ao retornar 0 (empate definitivo), preserva a ordem original e NÃO cai no fallback.
+                    if(is_callable($distribution_comparator)) {
+                        $custom_result = $distribution_comparator(
+                            $u1,
+                            $u2,
+                            $committee_name,
+                            $pending_assignments_count[$committee_name] ?? []
+                        );
+
+                        if($custom_result !== null) {
+                            $custom_result = (int) $custom_result;
+                            if ($custom_result !== 0) {
+                                return $custom_result;
+                            }
+
+                            return $item1->index <=> $item2->index;
+                        }
+                    }
+
+                    // Ordena por contagem na comissão
+                    $count1 = $valuers_committee_registrations_count[$committee_name][$u1->id] ?? 0;
+                    $count2 = $valuers_committee_registrations_count[$committee_name][$u2->id] ?? 0;
+                    $result = $count1 <=> $count2;
+
+                    // Se há quotas calculadas para esta comissão, ordena por espaço restante na quota
+                    if(isset($committee_quotas[$committee_name])) {
+                        $current1 = $valuers_committee_registrations_count[$committee_name][$u1->id] ?? 0;
+                        $current2 = $valuers_committee_registrations_count[$committee_name][$u2->id] ?? 0;
+                        $quota1 = $committee_quotas[$committee_name][$u1->id] ?? 0;
+                        $quota2 = $committee_quotas[$committee_name][$u2->id] ?? 0;
+                        
+                        // Quem ainda tem mais espaço na quota vem primeiro
+                        $remaining1 = $quota1 - $current1;
+                        $remaining2 = $quota2 - $current2;
+                        
+                        if($remaining1 !== $remaining2) {
+                            $result = $remaining2 <=> $remaining1;
+                        }
+                    }
+
+                    if ($result !== 0) {
+                        return $result;
+                    }
+
+                    return $item1->index <=> $item2->index;
+                });
+
+                $users = array_map(fn($item) => $item->user, $users_with_index);
+                
                 // adiciona os avaliadores da comissão na inscrição
                 foreach($users as $user) {
                     $checks_count++;
 
-                    // se a comissão tem limite de avaliadores por inscrição e esse limite já foi atingido, não adiociona
-                    $max_valuers = $valuers_per_registration->$committee_name ?? null;
+                    // se o usuário já alcançou o limite de inscrições configurado para ele na comissão, pula
+                    $max_user_registrations = $registrations_per_valuer[$committee_name][$user->id] ?? null;
+                    if($max_user_registrations && ($valuers_committee_registrations_count[$committee_name][$user->id] ?? 0) >= $max_user_registrations) {
+                        continue;
+                    }
+
+                    // verifica se a inscrição está na lista de inscrições do avaliador
+                    $user_registration_list = $registration_lists_per_valuer[$committee_name][$user->id] ?? null;
+                    $is_list_exclusive = $registration_list_exclusive_per_valuer[$committee_name][$user->id] ?? false;
+                    
+                    if($user_registration_list && is_array($user_registration_list) && count($user_registration_list) > 0) {
+                        $registration_number = $registration->number;
+                        $is_in_list = in_array($registration_number, $user_registration_list);
+                        
+                        // na lista exclusiva, só pode receber as inscrições da lista
+                        if($is_list_exclusive && !$is_in_list) {
+                            continue;
+                        }
+                    }
+
                     if($max_valuers && $registration_valuers_count[$registration->id][$committee_name] >= $max_valuers) {
                         continue;
                     }
@@ -640,7 +1310,7 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
 
                     $registration_entity = $registration_entity ?: $repo->find($registration->id);
 
-                    if(!$this->canUserBeValuer($registration_entity, $user)) {
+                    if(!$this->canUserBeValuer($registration_entity, $user, $committee_name)) {
                         continue;
                     }
 
@@ -648,13 +1318,20 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
                     $result[$registration->id][$user->id] = $committee_name;
 
                     // atualiza o número de avaliações do usuário
-                    $valuers_registrations_count[$committee_name][$user->id]++;
+                    $valuers_committee_registrations_count[$committee_name][$user->id]++;
+
+                    // Atualiza a carga usada pelo comparador nas próximas inscrições da comissão.
+                    $pending_assignments_count[$committee_name][$user->id] =
+                        ($pending_assignments_count[$committee_name][$user->id] ?? 0) + 1;
 
                     // incrementa o número de avaliações que a inscrição tem por comissão
                     $registration_valuers_count[$registration->id][$committee_name]++;
 
-                    if($app->config['app.log.evaluations']) {
-                        $app->log->debug("Registration: {$registration->number} - Comitê: $committee_name | User: {$user->id} | Count: {$valuers_registrations_count[$committee_name][$user->id]}");
+                    // incrementa o número total de avaliações que o avaliador tem
+                    $valuers_total_registrations_count[$user->id]++;
+
+                    if($is_log_active) {
+                        $app->log->debug("Registration: {$registration->number} - Comitê: $committee_name | User: {$user->id} | Count: {$valuers_committee_registrations_count[$committee_name][$user->id]}");
                     }
                 }
             }
@@ -662,8 +1339,9 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
             $app->em->clear();
             $registration_entity = null;
         }
+        unset($registration);
 
-        file_put_contents($log_filename, i::__('Salvando distribuição'));
+        $this->saveDistributionLog($opportunity, i::__('Salvando distribuição'));
 
         foreach($result as $registraion_id => $valuers) {
             $conn->update('registration', ['valuers' => json_encode($valuers)], ['id' => $registraion_id]);
@@ -673,26 +1351,27 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         $evaluationMethodConfiguration = $opportunity->evaluationMethodConfiguration;
         $app->mscache->delete($evaluationMethodConfiguration->summaryCacheKey);
 
-        if($app->config['app.log.evaluations']) {
-            file_put_contents($log_filename, i::__('Atualizando o resumo de avaliações da fase'));
+        $this->saveDistributionLog($opportunity, i::__('Atualizando o resumo de avaliações da fase'));
 
+        if($is_log_active) {
             $app->log->debug("Atualizando o resumo de avaliações da fase {$evaluationMethodConfiguration->name} ({$evaluationMethodConfiguration->id})");
-
         }
+
         $evaluationMethodConfiguration->getSummary(true);
 
         /** @var EvaluationMethodConfigurationAgentRelation[] */
         $relations = $evaluationMethodConfiguration->getAgentRelations();
         foreach($relations as $relation) {
-            file_put_contents($log_filename, sprintf(i::__('Atualizando o resumo do avaliador %s da comissão %s'), $relation->agent->name, $relation->group));
+            $this->saveDistributionLog($opportunity, sprintf(i::__('Atualizando o resumo do avaliador %s da comissão %s'), $relation->agent->name, $relation->group));
+            
             $relation->updateSummary();
         }
 
-        if($app->config['app.log.evaluations']) {
+        if($is_log_active) {
             $app->log->debug("Redistribuição de inscrições finalizada em " . round(microtime(true) - $start_time, 2) . " segundos");
         }
 
-        file_put_contents($log_filename, '');
+        $this->saveDistributionLog($opportunity, '');
     }
 
     /**
@@ -795,25 +1474,20 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
      * @return bool 
      */
     public function canEvaluateRegistrationNumber(Entities\Registration $registration, string $filter_configuration) {
-        $can = true;
-
-        if(preg_match("#([0-9]+) *[-] *([0-9]+)*#", $filter_configuration, $matches)){
-            $s1 = $matches[1];
-            $s2 = $matches[2];
-            
-            $len = max([strlen($s1), strlen($s2)]);
-            
-            $fin = substr($registration->number, -$len);
-            
-            if(intval($s2) == 0){ // "00" => "100"
-                $s2 = "1$s2";
-            }
-            if($fin < $s1 || $fin > $s2){
-                $can = false;
-            }
+        if (!preg_match("#([0-9]+) *[-] *([0-9]+)*#", $filter_configuration, $matches)) {
+            return false;
         }
-
-        return $can;
+        
+        $s1 = (int) $matches[1];
+        $s2 = (int) $matches[2];
+        $len = max(strlen($matches[1]), strlen($matches[2]));
+        $fin = (int) substr($registration->number, -$len);
+        
+        if ($s2 == 0) {
+            $s2 = 100;
+        }
+        
+        return $fin >= $s1 && $fin <= $s2;
     }
 
     public function canEvaluateRegistrationFields(Entities\Registration $registration, array $filter_configuration): bool {
@@ -824,11 +1498,34 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         
         foreach($filter_configuration as $field_name => $values){
             $found_field = false;
+
+            $field_value = $registration->$field_name ?? null;
+
+            if (!is_array($field_value) && is_string($field_value)) {
+                $trimmed = ltrim($field_value);
+                if ($trimmed != '' && ($trimmed[0] == '[' || $trimmed[0] == '{')) {
+                    $decoded = json_decode($field_value, true);
+                    if (json_last_error() === JSON_ERROR_NONE) {
+                        $field_value = $decoded;
+                    }
+                }
+            }
+
             foreach($values as $val) {
                 $val = trim($val);
-                
-                if(strtolower((string)$registration->metadata[$field_name]) === strtolower($val)){
-                    $found_field = true;
+
+                if (is_array($field_value) || is_object($field_value)) {
+                    foreach ((array) $field_value as $single_value) {
+                        if (strtolower((string) $single_value) === strtolower($val)) {
+                            $found_field = true;
+                            break 2;
+                        }
+                    }
+                } else {
+                    if (strtolower((string) $field_value) === strtolower($val)) {
+                        $found_field = true;
+                        break;
+                    }
                 }
             }
 
@@ -840,8 +1537,40 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         return $can;
     }
 
+    public function canEvaluateRegistrationSentTimestamp(Entities\Registration $registration, array $filter_configuration): bool {
+        $sent_timestamp = $registration->sentTimestamp->format('Y-m-d H:i:s');
+        if (isset($filter_configuration['from']) && isset($filter_configuration['to'])) {
+            if($sent_timestamp >= $filter_configuration['from'] && $sent_timestamp <= $filter_configuration['to']) {
+                return true;
+            } 
+            return false;
+        }
+
+        if (isset($filter_configuration['from'])) {
+            if($sent_timestamp >= $filter_configuration['from']) {
+                return true;
+            } 
+            return false;
+        }
+
+        if (isset($filter_configuration['to'])) {
+            if($sent_timestamp <= $filter_configuration['to']) {
+                return true;
+            } 
+            return false;
+        }
+
+        return true;
+    }
+
     public function canUserEvaluateRegistration(Entities\Registration $registration, User|GuestUser $user){
         if($user->is('guest')){
+            return false;
+        }
+
+        // Inscrições isentas por selos não podem ser avaliadas — já receberam
+        // status 10 automaticamente e não devem aparecer na workload do avaliador.
+        if($registration->sealExemptionStatus === 'granted'){
             return false;
         }
 
@@ -850,188 +1579,277 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         return isset($valuers[$user->id]);
     }
     
-    public function canUserBeValuer(Entities\Registration $registration, User|GuestUser $user): bool {
+    public function canUserBeValuer(Entities\Registration $registration, User|GuestUser $user, string $committe_name): bool {
         $app = App::i();
+        $can = false;
+        $has_filter = false;
+        $has_limit_per_committee = false;
 
         if($user->is('guest')){
             return false;
         }
 
-        $cache_key = __METHOD__ . " : $registration -> $user";
+        $cache_key = __METHOD__ . " : $registration -> $user -> $committe_name";
         if($app->rcache->contains($cache_key)){
             return $app->rcache->fetch($cache_key);
         }
 
         $evaluation_config = $registration->evaluationMethodConfiguration;
 
-        $agent_relations = [];
-        
-        foreach($evaluation_config->getRelatedAgents(return_relations: true) as $relations) {
-            $agent_relations = array_merge($agent_relations, $relations);
+        $agent_relation = $app->repo(EvaluationMethodConfigurationAgentRelation::class)->findOneBy([
+            'group' => $committe_name,
+            'status' => EvaluationMethodConfigurationAgentRelation::STATUS_ACTIVE,
+            'agent' => $user->profile,
+            'owner' => $evaluation_config
+        ]);
+
+        // se o usuário não é avaliador da comissão em questão, ele não pode avaliar
+        if(!$agent_relation) {
+            $app->rcache->save($cache_key, false);
+            return false;
         }
 
-        $agent_relations = array_filter($agent_relations, function($ar) use($user) {
-            return $ar->agent->user->equals($user);
-        });
+        // se a inscrição é do próprio avaliador, ele não pode avaliar
+        if($registration->owner->user->equals($user)) {
+            $app->rcache->save($cache_key, false);
+            return false;
+        }
 
-        $is_same_as_evaluator = false;
-        $has_global_filter_configs = false;
-        foreach($agent_relations as $ar) {
-            $config = $evaluation_config->fetchFields->{$ar->group} ?? (object) [];
-            foreach($config as $values) {
-                if(count($values) > 0) {
-                    $has_global_filter_configs = true;
-                }
-            }
-            $config = $evaluation_config->valuersPerRegistration->{$ar->group} ?? null;
-            if(!empty((array) $config)) {
-                $has_global_filter_configs = true;
-            }
-
-            if($registration->owner->id == $ar->agent->id) {
-                $is_same_as_evaluator = true;
+        $config = $evaluation_config->fetchFields->{$committe_name} ?? (object) [];
+        foreach($config as $values) {
+            if(!empty($values)) {
+                $has_filter = true;
             }
         }
 
-        if (
-            $is_same_as_evaluator || 
-            (
-                empty($evaluation_config->fetch->{$user->id}) && 
-                empty($evaluation_config->fetchCategories->{$user->id}) && 
-                empty($evaluation_config->fetchRanges->{$user->id}) && 
-                empty($evaluation_config->fetchProponentTypes->{$user->id}) && 
-                empty($evaluation_config->fetchSelectionFields->{$user->id}) && 
-                !$has_global_filter_configs
-            )
+        $config = $evaluation_config->valuersPerRegistration->{$committe_name} ?? null;
+        if(!empty((array) $config)) {
+            $has_limit_per_committee = true;
+        }
+
+        // se não tem filtros globais da comissão E não há nenhum filtro 
+        // configurado para o avaliador, ele não pode avaliar
+        $agent_categories = $agent_relation->getCategories();
+        $agent_ranges = $agent_relation->getRanges();
+        $agent_proponent_types = $agent_relation->getProponentTypes();
+        $agent_distribution = $agent_relation->getDistribution();
+        $agent_selection_fields = $agent_relation->getSelectionFields();
+
+        if (empty($agent_distribution) && 
+            empty($agent_categories) && 
+            empty($agent_ranges) && 
+            empty($agent_proponent_types) && 
+            empty($agent_selection_fields) && 
+            (!$has_filter && !$has_limit_per_committee)
         ) {
             return false;
         }
 
-        if($can = $evaluation_config->canUser('@control', $user)){
-            $fetch = [];
-            $config_fetch = (array) $evaluation_config->fetch;
-            $config_fetchCategories = (array) $evaluation_config->fetchCategories;
-            $config_ranges = (array) $evaluation_config->fetchRanges;
-            $config_proponent_types = (array) $evaluation_config->fetchProponentTypes;
-            $config_selection_fields = (array) $evaluation_config->fetchSelectionFields;
-            $global_filter_configs = (array) $evaluation_config->fetchFields;
+        if(!$evaluation_config->canUser('@control', $user)) {
+            $app->rcache->save($cache_key, false);
+            return false;
+        }
+
+        $fetch = [];
+        $config_fetch = [$user->id => $agent_distribution];
+        $config_fetchCategories = [$user->id => $agent_categories ?? []];
+        $config_ranges = [$user->id => $agent_ranges ?? []];
+        $config_proponent_types = [$user->id => $agent_proponent_types ?? []];
+        $config_selection_fields = [$user->id => $agent_selection_fields ?? []];
+        $config_sent_timestamp = [];
+        $global_filter_configs = (array) $evaluation_config->fetchFields;
+        
+        if(is_array($global_filter_configs)) {
+            $committee_config = $global_filter_configs[$committe_name] ?? (object) [];
+
+            $global_config_categories = (array) ($committee_config->category ?? []);
+            $global_config_ranges = (array) ($committee_config->range ?? []);
+            $global_config_proponent_types = (array) ($committee_config->proponentType ?? []);
+            $global_config_sent_timestamp = (array) ($committee_config->sentTimestamp ?? []);
+
+            $global_config_selection_fields = [];
+            foreach ($committee_config as $key => $value) {
+                if (!in_array($key, ['category', 'range', 'proponentType', 'sentTimestamp'])) {
+                    $global_config_selection_fields[$key] = array_merge($global_config_selection_fields[$key] ?? [], (array) $value);
+                }
+            }
             
-            $relations = $evaluation_config->agentRelations;
+            if(!empty($global_config_categories)) {
+                $user_individual_categories = $config_fetchCategories[$user->id] ?? [];
+                
+                if(!empty($user_individual_categories)) {
+                    $config_fetchCategories[$user->id] = array_intersect(
+                        $global_config_categories, 
+                        $user_individual_categories
+                    );
+                } else {
+                    $config_fetchCategories[$user->id] = $global_config_categories;
+                }
+            }
 
-            if(is_array($global_filter_configs)) {
-                $global_config_categories = [];
-                $global_config_ranges = [];
-                $global_config_proponent_types = [];
-                $global_config_selection_fields = [];
+            if(!empty($global_config_ranges)) {
+                $user_individual_ranges = $config_ranges[$user->id] ?? [];
+                
+                if(!empty($user_individual_ranges)) {
+                    $config_ranges[$user->id] = array_intersect(
+                        $global_config_ranges, 
+                        $user_individual_ranges
+                    );
+                } else {
+                    $config_ranges[$user->id] = $global_config_ranges;
+                }
+            }
 
-                foreach($relations as $relation) {
-                    if($relation->agent->user->equals($user)) {
-                        $committee_config = $global_filter_configs[$relation->group] ?? (object) [];
+            if(!empty($global_config_proponent_types)) {
+                $user_individual_proponent_types = $config_proponent_types[$user->id] ?? [];
+                
+                if(!empty($user_individual_proponent_types)) {
+                    $config_proponent_types[$user->id] = array_intersect(
+                        $global_config_proponent_types, 
+                        $user_individual_proponent_types
+                    );
+                } else {
+                    $config_proponent_types[$user->id] = $global_config_proponent_types;
+                }
+            }
 
-                        $global_config_categories = array_merge($global_config_categories, (array) ($committee_config->category ?? []));
-
-                        $global_config_ranges = array_merge($global_config_ranges, (array) ($committee_config->range ?? []));
-
-                        $global_config_proponent_types = array_merge($global_config_proponent_types, (array) ($committee_config->proponentType ?? []));
-
-                        foreach ($committee_config as $key => $value) {
-                            if (!in_array($key, ['category', 'range', 'proponentType', 'distribution'])) {
-                                $global_config_selection_fields[$key] = array_merge($global_config_selection_fields[$key] ?? [], (array) $value);
-                            }
+            if(!empty($global_config_selection_fields)) {
+                $user_individual_selection_fields = $config_selection_fields[$user->id] ?? [];
+                
+                if(!empty($user_individual_selection_fields)) {
+                    $intersected_fields = [];   
+                    foreach($global_config_selection_fields as $field_name => $global_values) {
+                        
+                        $user_values = $user_individual_selection_fields->$field_name ?? [];
+                        if(!empty($user_values)) {
+                            $intersected_fields[$field_name] = array_intersect(
+                                (array) $global_values,
+                                (array) $user_values
+                            );
+                        } else {
+                            $intersected_fields[$field_name] = $global_values;
                         }
                     }
-                }
-
-                if(!empty($global_config_categories)) {
-                    $config_fetchCategories = [$user->id => $global_config_categories];
-                }
-
-                if(!empty($global_config_ranges)) {
-                    $config_ranges = [$user->id => $global_config_ranges];
-                }
-
-                if(!empty($global_config_proponent_types)) {
-                    $config_proponent_types = [$user->id => $global_config_proponent_types];
-                }
-
-                if(!empty($global_config_selection_fields)) {
-                    $config_selection_fields = [$user->id => $global_config_selection_fields];
+                    $config_selection_fields[$user->id] = $intersected_fields;
+                } else {
+                    $config_selection_fields[$user->id] = $global_config_selection_fields;
                 }
             }
 
-            if(is_array($config_fetch)){
-                foreach($config_fetch as $id => $val){
-                    $fetch [(int)$id] = $val;
-                }
+            if(!empty($global_config_sent_timestamp)) {
+                $config_sent_timestamp = [$user->id => $global_config_sent_timestamp]; 
             }
-            $fetch_categories = [];
-            if(is_array($config_fetchCategories)){
-                foreach($config_fetchCategories as $id => $val){
-                    $fetch_categories [(int)$id] = $val;
-                }
-            }
+        }
+        
+        $configured_filters = [];
 
-            $fetch_selection_fields = [];
-            if(is_array($config_selection_fields)) {
-                foreach($config_selection_fields as $id => $fields) {
-                    foreach($fields as $field => $val) {
-                        $fetch_selection_fields [(int)$id][$field] = $val;
-                    }
-                }
+        if(is_array($config_fetch)){
+            foreach($config_fetch as $id => $val){
+                $fetch [(int)$id] = $val;
             }
-
-            $fetch_ranges = [];
-            if(is_array($config_ranges)){
-                foreach($config_ranges as $id => $val){
-                    $fetch_ranges [(int)$id] = $val;
-                }
+        }
+        $fetch_categories = [];
+        if(is_array($config_fetchCategories)){
+            foreach($config_fetchCategories as $id => $val){
+                $fetch_categories [(int)$id] = $val;
             }
+        }
 
-            $fetch_proponent_types = [];
-            if(is_array($config_proponent_types)){
-                foreach($config_proponent_types as $id => $val){
-                    $fetch_proponent_types [(int)$id] = $val;
-                }
-            }
-
-            // verifica permissão de avaliação por número da inscrição
-            if ($ufetch = !empty($fetch[$user->id]) ? $fetch[$user->id] : false){
-                if(!$this->canEvaluateRegistrationNumber($registration, $ufetch)){
-                    $can = false;
-                }
-            }
-
-            // verifica permissão de avaliação por categoria
-            if ($ucategories = $fetch_categories[$user->id] ?? false){
-                if(!$this->canEvaluateRegistrationCategory($registration, $ucategories)){
-                    $can = false;
-                }
-            }
-
-            // verifica permissão de avaliação por faixa
-            if ($uranges = $fetch_ranges[$user->id] ?? false){
-                if(!$this->canEvaluateRegistrationRange($registration, $uranges)){
-                    $can = false;
-                }
-            }
-
-            // verifica permissão de avaliação por tipo de proponente
-            if ($uproponent_types = $fetch_proponent_types[$user->id] ?? false){
-                if(!$this->canEvaluateRegistrationProponentType($registration, $uproponent_types)){
-                    $can = false;
-                }
-            }
-
-            // verifica permissão de avaliação por campos de seleção
-            if ($uselection_fields = $fetch_selection_fields[$user->id] ?? false){
-                if(!$this->canEvaluateRegistrationFields($registration, $uselection_fields)){
-                    $can = false;
+        $fetch_selection_fields = [];
+        if(is_array($config_selection_fields)) {
+            foreach($config_selection_fields as $id => $fields) {
+                foreach($fields as $field => $val) {
+                    $fetch_selection_fields [(int)$id][$field] = $val;
                 }
             }
         }
 
-        $app->rcache->save($cache_key, $can);
+        $fetch_ranges = [];
+        if(is_array($config_ranges)){
+            foreach($config_ranges as $id => $val){
+                $fetch_ranges [(int)$id] = $val;
+            }
+        }
 
+        $fetch_proponent_types = [];
+        if(is_array($config_proponent_types)){
+            foreach($config_proponent_types as $id => $val){
+                $fetch_proponent_types [(int)$id] = $val;
+            }
+        }
+
+        // verifica permissão de avaliação por número da inscrição
+        if ($ufetch = !empty($fetch[$user->id]) ? $fetch[$user->id] : false){
+            $has_filter = true;
+            $configured_filters['number'] = $ufetch;
+        }
+
+        // verifica permissão de avaliação por categoria
+        if ($ucategories = $fetch_categories[$user->id] ?? false){
+            $has_filter = true;
+            $configured_filters['category'] = $ucategories;
+        }
+
+        // verifica permissão de avaliação por faixa
+        if ($uranges = $fetch_ranges[$user->id] ?? false){
+            $has_filter = true;
+            $configured_filters['range'] = $uranges;
+        }
+
+        // verifica permissão de avaliação por tipo de proponente
+        if ($uproponent_types = $fetch_proponent_types[$user->id] ?? false){
+            $has_filter = true;
+            $configured_filters['proponentType'] = $uproponent_types;
+        }
+
+        // verifica permissão de avaliação por campos de seleção
+        if ($uselection_fields = $fetch_selection_fields[$user->id] ?? false){
+            $has_filter = true;
+            $configured_filters['selectionFields'] = $uselection_fields;
+        }
+
+        if ($usent_timestamp = $config_sent_timestamp[$user->id] ?? false) {
+            $has_filter = true;
+            $configured_filters['sentTimestamp'] = $usent_timestamp;
+        }
+        
+        if (!empty($configured_filters)) {
+            $can = true;
+            
+            foreach ($configured_filters as $filter_type => $filter_value) {
+                $filter_passed = false;
+                
+                switch ($filter_type) {
+                    case 'number':
+                        $filter_passed = $this->canEvaluateRegistrationNumber($registration, $filter_value);
+                        break;
+                    case 'category':
+                        $filter_passed = $this->canEvaluateRegistrationCategory($registration, $filter_value);
+                        break;
+                    case 'range':
+                        $filter_passed = $this->canEvaluateRegistrationRange($registration, $filter_value);
+                        break;
+                    case 'proponentType':
+                        $filter_passed = $this->canEvaluateRegistrationProponentType($registration, $filter_value);
+                        break;
+                    case 'selectionFields':
+                        $filter_passed = $this->canEvaluateRegistrationFields($registration, $filter_value);
+                        break;
+                    case 'sentTimestamp':
+                        $filter_passed = $this->canEvaluateRegistrationSentTimestamp($registration, $filter_value);
+                        break;
+                }
+                
+                if (!$filter_passed) {
+                    $can = false;
+                    break;
+                }
+            }
+        } elseif (!$has_filter) {
+            $can = (bool) $evaluation_config->valuersPerRegistration->$committe_name;
+        }
+
+        $app->rcache->save($cache_key, $can);
         return $can;
     }
 
@@ -1045,12 +1863,23 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         }
     }
 
+    /**
+     * Retorna o nome da partial do formulário de avaliação
+     * 
+     * @return string
+     */
     function getEvaluationFormPartName(){
         $slug = $this->getSlug();
 
         return "$slug--evaluation-form";
     }
 
+    /**
+     * Retorna o sumário de avaliações de uma inscrição
+     * 
+     * @param Registration $registration
+     * @return array
+     */
     public function getEvaluationSummary($registration) {
         $app = App::i();
 
@@ -1077,24 +1906,44 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         return $result;
     }
 
+    /**
+     * Retorna o nome da partial de visualização da avaliação
+     * 
+     * @return string
+     */
     function getEvaluationViewPartName(){
         $slug = $this->getSlug();
 
         return "$slug--evaluation-view";
     }
 
+    /**
+     * Retorna o nome da partial de informações do formulário de avaliação
+     * 
+     * @return string
+     */
     function getEvaluationFormInfoPartName(){
         $slug = $this->getSlug();
 
         return "$slug--evaluation-info";
     }
     
+    /**
+     * Retorna o nome da partial do formulário de configuração do método
+     * 
+     * @return string
+     */
     function getConfigurationFormPartName(){
         $slug = $this->getSlug();
 
         return "$slug--configuration-form";
     }
 
+    /**
+     * Registra o método de avaliação na aplicação
+     * 
+     * @return void
+     */
     function register(){
         $app = App::i();
 
@@ -1121,6 +1970,13 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         ]);
     }
     
+    /**
+     * Registra um metadado específico para a configuração deste método
+     * 
+     * @param string $key
+     * @param array $config
+     * @return void
+     */
     function registerEvaluationMethodConfigurationMetadata($key, array $config){
         $app = App::i();
 
@@ -1129,18 +1985,38 @@ abstract class EvaluationMethod extends Module implements \JsonSerializable{
         $app->registerMetadata($metadata, 'MapasCulturais\Entities\EvaluationMethodConfiguration', $this->getSlug());
     }
 
+    /**
+     * Indica se o método utiliza comitê de avaliação
+     * 
+     * @return bool
+     */
     function usesEvaluationCommittee(){
         return true;
     }
     
+    /**
+     * Indica se o método utiliza grupos de comitê
+     * 
+     * @return bool
+     */
     public function useCommitteeGroups(): bool {
         return true;
     }
 
+    /**
+     * Indica se o método avalia a própria inscrição (auto-avaliação)
+     * 
+     * @return bool
+     */
     public function evaluateSelfApplication(): bool {
         return true;
     }
 
+    /**
+     * Serializa o objeto para JSON
+     * 
+     * @return array
+     */
     public function jsonSerialize(): array {
         return [];
     }

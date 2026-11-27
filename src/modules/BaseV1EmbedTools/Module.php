@@ -26,19 +26,11 @@ class Module extends \MapasCulturais\Module
             $app->view->enqueueScript('app', 'evaluations', 'js/v1-embedtools-evaluations.js');
             $app->view->enqueueScript('app', 'editable', 'js/editable.js');
 
-            $theme_instance = new BaseV1\Theme($app->config['themes.assetManager']);
+            $theme_instance = new BaseV1\Theme($app->assetManager);
             $theme_instance->path = $app->view->path;
             $app->view = $theme_instance;
             $app->view->enqueueScript('app', 'embedtools-messages', 'js/embedtools.js', ['mapasculturais']);
             $app->view->enqueueStyle('app', 'embedtools-style', 'css/embedtools.css', ['main']);
-
-            $app->hook(' template(embedtools.reportmanager.reports-footer):before', function () {
-                $this->part('create-reports-modal', []);
-            });
-
-            $app->hook('template(embedtools.reportmanager.reports-footer):before', function () {
-                $this->part('dynamic-reports');
-            });
 
             $app->hook('app.init:after', function () {
                 /** @var \ArrayObject $path */

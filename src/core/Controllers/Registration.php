@@ -10,6 +10,7 @@ use MapasCulturais\Entities\Registration as EntityRegistration;
 use MapasCulturais\Entities\OpportunityMeta;
 use MapasCulturais\Entities\RegistrationEvaluation;
 use MapasCulturais\Entities\RegistrationSpaceRelation as RegistrationSpaceRelationEntity;
+use MapasCulturais\i;
 
 /**
  * Registration Controller
@@ -22,7 +23,6 @@ class Registration extends EntityController {
     use Traits\ControllerUploads,
         Traits\ControllerAgentRelation,
     	Traits\ControllerSealRelation,
-        Traits\ControllerLock,
         Traits\ControllerAPI;
 
     function __construct() {
@@ -85,8 +85,13 @@ class Registration extends EntityController {
             ];
             $registration = $this->requestedEntity;
             foreach($registration->opportunity->registrationFileConfigurations as $rfc){
+                // Se o campo tem tipos de arquivo definidos, usa eles; senão usa os tipos padrão
+                $allowed_mime_types = $mime_types;
+                if(!empty($rfc->allowedFileTypes) && is_array($rfc->allowedFileTypes)) {
+                    $allowed_mime_types = $rfc->allowedFileTypes;
+                }
 
-                $fileGroup = new Definitions\FileGroup($rfc->fileGroupName, $mime_types, \MapasCulturais\i::__('O arquivo enviado não é um documento válido.'), true, null, true);
+                $fileGroup = new Definitions\FileGroup($rfc->fileGroupName, $allowed_mime_types, \MapasCulturais\i::__('O arquivo enviado não é um documento válido.'), true, null, true);
                 $app->registerFileGroup('registration', $fileGroup);
             }
         });
@@ -110,6 +115,20 @@ class Registration extends EntityController {
             $this->tmpFile = $tmpFile;
         });
 
+        $app->hook('entity(Registration).file(rfc_<<*>>).insert:after', function() use ($app){
+            $registeredGroup = $app->getRegisteredFileGroup($this->owner->controllerId, $this->group);
+            
+            if($registeredGroup->unique) {
+                if($old_files = $app->repo($this->className)->findBy(['owner' => $this->owner, 'group' => $this->group])) {
+                    foreach($old_files as $old_file) {
+                        if($old_file->id != $this->id) {
+                            $old_file->delete(true);
+                        }
+                    }
+                }
+            }
+        });
+
         $app->hook('<<GET|POST|PUT|PATCH|DELETE>>(registration.<<*>>):before', function() {
             $registration = $this->getRequestedEntity();
            
@@ -128,6 +147,25 @@ class Registration extends EntityController {
         parent::__construct();
     }
     
+
+    function PATCH_single($data = null)
+    {
+        $entity = $this->requestedEntity;
+        $data = $this->postData;
+
+        // se estiver no modo "editableFields", filtra os dados da requisição para 
+        // passar somente os que estão abertos para edição
+        if ($entity->status > 0 && $entity->canUser('sendEditableFields')) {
+            foreach(array_keys($data) as $key) {
+                if($key !== 'editableFields' && !in_array($key, $entity->editableFields)) {
+                    unset($data[$key]);
+                }
+            }
+        }
+        
+        parent::PATCH_single($data);
+    }
+
      /**
      * metodo vindo da edição da oportunidade, no campo de ESPAÇO CULTURAL tem que fazer a 
      * verificação se já tem registro na tabela, se tiver deve fazer um update para o novo
@@ -201,6 +239,14 @@ class Registration extends EntityController {
         $this->json($result);
     }
 
+    /**
+    * Exclui uma inscrição (apenas se estiver com status rascunho)
+    * 
+    * Esta ação requer autenticação e permissão 'remove' na inscrição.
+    * Apenas inscrições com status 0 (rascunho) podem ser excluídas.
+    * 
+    * @return void
+    */
     public function POST_deleteRegistration()
     {
         $this->requireAuthentication();
@@ -220,6 +266,15 @@ class Registration extends EntityController {
         $this->json($result);
     }
 
+    /**
+    * Reabre uma avaliação para edição
+    * 
+    * Esta ação requer autenticação e permite que um avaliador reabra
+    * uma avaliação que já foi enviada, desde que ainda esteja dentro
+    * do período de avaliação.
+    * 
+    * @return void
+    */
     public function POST_reopenEvaluation()
     {
         $this->requireAuthentication();
@@ -250,6 +305,14 @@ class Registration extends EntityController {
         }
     }
 
+    /**
+    * Envia uma avaliação
+    * 
+    * Esta ação requer autenticação e permite que um avaliador envie
+    * sua avaliação, desde que ainda esteja dentro do período de avaliação.
+    * 
+    * @return void
+    */
     public function POST_sendEvaluation(){
         $this->requireAuthentication();
 
@@ -276,6 +339,16 @@ class Registration extends EntityController {
         }
     }
 
+    /**
+    * Cria URL para ações do controlador
+    * 
+    * Sobrescreve o método padrão para mapear ações 'single' e 'edit'
+    * para a ação 'view'.
+    * 
+    * @param string $actionName Nome da ação
+    * @param array $data Dados para a URL
+    * @return string URL gerada
+    */
     public function createUrl($actionName, array $data = array()) {
         if($actionName == 'single' || $actionName == 'edit'){
             $actionName = 'view';
@@ -289,8 +362,15 @@ class Registration extends EntityController {
     }
     
     function getPreviewEntity(){
-        if(preg_match('/^(\d+)-preview$/', $this->urlData[0] ?? '', $matches)){
-            $app = App::i();
+        $app = App::i();
+        
+        $id = isset($this->urlData['id']) ? $this->urlData['id'] : (isset($this->urlData[0]) ? $this->urlData[0] : null);
+        $referer = $app->request->getReferer()[0] ?? "";
+        if($id == -1 && $referer && preg_match("#/(\d+-preview)/#", $referer, $matches)) {
+            $id = $matches[1];
+        }
+
+        if(preg_match('/^(\d+)-preview$/', $id ?? '', $matches)){
             $opportunity = $app->repo('Opportunity')->find($matches[1]);
 
             $registration = new $this->entityClassName;
@@ -310,12 +390,27 @@ class Registration extends EntityController {
     /**
      * @return \MapasCulturais\Entities\Registration
      */
-    function getRequestedEntity() {
-        if($preview_entity = $this->getPreviewEntity()) {
-            return $preview_entity;
-        } else {
-            return parent::getRequestedEntity();
-        }   
+    function getRequestedEntity(): ?EntityRegistration {
+        $app = App::i();
+
+        if($preview_entity = $this->getPreviewEntity()){
+            if($app->request->getMethod() != "GET"){
+                $this->errorJson(['message' => [\MapasCulturais\i::__('Este formulário é um pré-visualização da da ficha de inscrição.')]]);
+            } else {
+                return $preview_entity;
+            }
+        }
+
+        /**
+         * @var EntityRegistration
+         */
+        $requested_entity = parent::getRequestedEntity();
+        
+        if($app->auth->isUserAuthenticated() && !$app->isEntityPermissionCacheRecreated($requested_entity)) {
+            $requested_entity->recreatePermissionCache([$app->user]);
+        }
+
+        return $requested_entity;
     }
 
     /**
@@ -379,10 +474,26 @@ class Registration extends EntityController {
        
         $entity->checkPermission('view');
 
-
-        if($entity->status === Entities\Registration::STATUS_DRAFT && $entity->canUser('modify')){
-            parent::GET_edit();
+        if($entity->status === Entities\Registration::STATUS_DRAFT){
+            $this->render('edit', ['entity' => $entity]);
         } else {
+            if($entity->opportunity->parent) {
+                $app = App::i();
+                $parent_registration = $app->repo('Registration')->findOneBy([
+                    'opportunity' => $entity->opportunity->parent->id, 
+                    'number' => $entity->number
+                ]);
+
+                // Fallback para fases sem vínculo por number (ex: fase de execução):
+                // redireciona para a inscrição linkada via previousPhaseRegistrationId.
+                if (!$parent_registration && $entity->previousPhaseRegistrationId) {
+                    $parent_registration = $app->repo('Registration')->find($entity->previousPhaseRegistrationId);
+                }
+
+                if ($parent_registration) {
+                    $app->redirect($parent_registration->singleUrl);
+                }
+            }
             parent::GET_single();
         }
     }
@@ -468,6 +579,15 @@ class Registration extends EntityController {
         }
     }
 
+    /**
+    * Obtém os menores status de um conjunto de avaliações
+    * 
+    * Processa um array de avaliações e retorna um array com os menores
+    * status encontrados para cada ID de inscrição.
+    * 
+    * @param array $registrations Array de avaliações
+    * @return array Array com os menores status por ID de inscrição
+    */
     private function getSmallerStatuses($registrations) {
         if (is_array($registrations)) {
             $filtered = [];
@@ -501,7 +621,6 @@ class Registration extends EntityController {
         if($errors = $registration->getSendValidationErrors()){
             $this->errorJson($errors);
         }else{
-            $registration->cleanMaskedRegistrationFields();
             $registration->send();
 
             if($this->isAjax()){
@@ -566,10 +685,11 @@ class Registration extends EntityController {
                     }
                 }
 
-                if ($invalids > $valids)
+                if ($invalids > $valids) {
                     $_status = "invalid";
+                    $registration->forceSetStatus($registration, $_status);
+                }
 
-                $registration->forceSetStatus($registration, $_status);
             }
         }
     }
@@ -616,6 +736,87 @@ class Registration extends EntityController {
         $this->_finishRequest($registration);
         $app->enableAccessControl();
     
+    }
+
+    function POST_deleteEvaluationAndRemoveValuer() {
+        $app = App::i();
+        $registration = $this->getRequestedEntity();
+        if(!$registration) {
+            $this->errorJson(['message' => [i::__('Inscrição não encontrada.')]], 400);
+            return;
+        }
+
+        $registration->checkPermission('modifyValuers');
+
+        $valuer_user_id = (int) ($this->data['valuerUserId'] ?? 0);
+        $valuer_committee = (string) ($this->data['committee'] ?? '');
+        $evaluation_id = (int) ($this->data['evaluationId'] ?? 0);
+
+        if ($valuer_user_id <= 0) {
+            $this->errorJson(['valuerUserId' => i::__('O id do avaliador é obrigatório.')], 400);
+            return;
+        }
+
+        $exclude = array_map('intval', (array) $registration->valuersExcludeList);
+        $include = array_map('intval', (array) $registration->valuersIncludeList);
+
+        if (!in_array($valuer_user_id, $exclude, true)) {
+            $exclude[] = $valuer_user_id;
+        }
+
+        $include = array_values(array_filter($include, fn($id) => (int) $id !== $valuer_user_id));
+        $exclude = array_values(array_unique($exclude));
+
+        $registration->setValuersIncludeList($include);
+        $registration->setValuersExcludeList($exclude);
+
+        $valuer_key = (string) $valuer_user_id;
+        $conn = $app->em->getConnection();
+        $conn->executeQuery(
+            "UPDATE registration
+                SET valuers = CASE
+                    WHEN COALESCE(valuers->>:valuer_key, '') = :valuer_committee THEN valuers - :valuer_key
+                    ELSE valuers
+                END
+              WHERE id = :registration_id",
+            [
+                'valuer_key' => $valuer_key,
+                'valuer_committee' => $valuer_committee,
+                'registration_id' => $registration->id,
+            ]
+        );
+
+        $evaluation = null;
+        if ($evaluation_id > 0) {
+            $evaluation = $app->repo('RegistrationEvaluation')->find($evaluation_id);
+        }
+
+        if (
+            !$evaluation &&
+            $valuer_committee !== ''
+        ) {
+            $evaluation = $app->repo('RegistrationEvaluation')->findOneBy([
+                'registration' => $registration->id,
+                'user' => $valuer_user_id,
+                'committee' => $valuer_committee,
+            ]);
+        }
+
+        if (!$evaluation) {
+            $evaluation = $app->repo('RegistrationEvaluation')->findOneBy([
+                'registration' => $registration->id,
+                'user' => $valuer_user_id,
+            ]);
+        }
+
+        if ($evaluation instanceof RegistrationEvaluation) {
+            $evaluation->checkPermission('remove');
+            $evaluation->delete(true);
+        } else {
+            $app->em->flush();
+        }
+
+        $this->json(['success' => true]);
     }
 
     /**
@@ -705,10 +906,9 @@ class Registration extends EntityController {
         $this->json(true);
     }
 
-
     function GET_evaluation() {
-
         $this->requireAuthentication();
+
         $app = App::i();
 
         $entity = $app->repo('Registration')->find($this->data['id']);
@@ -716,11 +916,10 @@ class Registration extends EntityController {
         if (!$entity) {
             $app->pass();
         }
-
-        $valuer_user = $app->repo('User')->find($this->data['user'] ?? -1);
-
-
+        
         $entity->checkPermission('viewUserEvaluation');
+
+        $valuer_user = $app->repo('User')->find($this->data['user'] ?? -1) ?: $app->user;
 
         $this->render('evaluation', ['entity' => $entity, 'valuer_user' => $valuer_user]);
     }
@@ -743,4 +942,256 @@ class Registration extends EntityController {
 
         $this->json(true);
     }
+
+    function GET_createZipFiles() {
+        $app = App::i();
+        $this->requireAuthentication();
+
+        $entity = $this->requestedEntity;
+        
+        if (!$entity) {
+            $app->pass(); 
+        }
+        
+        $entity->checkPermission('view');
+
+        $firstPhase = $entity->opportunity->firstPhase ?: $entity->opportunity;
+        $phases = array_filter($firstPhase->allPhases ?: [$firstPhase], fn($phase) => $phase->isDataCollection);
+        $registrations = [$entity->id => $entity];
+
+        if ($phases) {
+            foreach ($this->repository->findBy(['number' => $entity->number, 'opportunity' => $phases]) as $registration) {
+                $registrations[$registration->id] = $registration;
+            }
+        }
+
+        $files = [];
+        foreach ($registrations as $registration) {
+            if (!$registration->canUser('view')) {
+                continue;
+            }
+
+            $phase = $registration->opportunity;
+            $directory = $phase->id . '-' . $this->sanitizeFilename($phase->name);
+            foreach ($registration->files as $group) {
+                foreach (is_array($group) ? $group : [$group] as $file) {
+                    $path = $file->path;
+                    if (is_file($path)) {
+                        $files[$directory . '/' . basename($path)] = $path;
+                    }
+                }
+            }
+        }
+
+        if (!$files) {
+            $this->json([
+                'success' => false,
+                'message' => \MapasCulturais\i::__('Não existem arquivos a serem baixados.')
+            ], 400);
+            return;
+        }
+
+        $fileName = preg_replace('/[^a-zA-Z0-9_\-.]/', '_', $entity->number . '-' . uniqid()) . '.zip';
+        $tmpZipPath = sys_get_temp_dir() . '/' . uniqid('zip_') . '.zip';
+
+        $zip = new \ZipArchive();
+        if ($zip->open($tmpZipPath, \ZipArchive::CREATE) !== true) {
+            error_log("Erro ao abrir ZIP para entidade {$entity->id}");
+            $this->json([
+                'success' => false,
+                'message' => \MapasCulturais\i::__('Houve um problema ao preparar o arquivo. Fale com o administrador.')
+            ], 500);
+            return;
+        }
+
+        foreach ($files as $name => $path) {
+            $zip->addFile($path, $name);
+        }
+
+        $zip->close();
+
+        if (!file_exists($tmpZipPath)) {
+            error_log("ZIP não encontrado após criação (entidade {$entity->id})");
+            $this->json([
+                'success' => false,
+                'message' => \MapasCulturais\i::__('Não foi possível gerar o arquivo. Tente novamente.')
+            ], 500);
+            return;
+        }
+
+        // Cabeçalhos para forçar download
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="' . basename($fileName) . '"');
+        header('Content-Length: ' . filesize($tmpZipPath));
+        header('Pragma: public');
+        header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
+        header('Expires: 0');
+
+        // Envia e remove o arquivo
+        readfile($tmpZipPath);
+        unlink($tmpZipPath);
+        exit;
+    }
+
+    function GET_exportPDF() {
+        $app = App::i();
+        $this->requireAuthentication();
+        
+        $entity = $this->requestedEntity;
+        
+        if (!$entity) {
+            $app->pass(); 
+        }
+        
+        $entity->checkPermission('view');
+        
+        try {
+            // 1. Renderizar HTML da ficha usando template
+            $html = $app->view->partialRender(
+                __template: 'registration/pdf', 
+                __data: ['registration' => $entity],
+                _is_part: false
+            );
+            
+            // 2. Converter HTML → PDF principal
+            $mainPdf = $this->generatePDFFromHTML($html, $entity);
+            
+            // 3. Coletar anexos PDF
+            $attachments = $this->collectPDFAttachments($entity);
+            
+            // 4. Mesclar PDFs
+            $finalPdf = $this->mergePDFs($mainPdf, $attachments);
+            
+            // 5. Retornar para download
+            $filename = $this->sanitizeFilename($entity->number) . '.pdf';
+            header('Content-Type: application/pdf');
+            header('Content-Disposition: attachment; filename="' . $filename . '"');
+            header('Content-Length: ' . strlen($finalPdf));
+            header('Pragma: public');
+            header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
+            header('Expires: 0');
+            
+            echo $finalPdf;
+            exit;
+            
+        } catch (\Exception $e) {
+            error_log("Erro ao gerar PDF da inscrição {$entity->id}: " . $e->getMessage());
+            $this->json([
+                'success' => false,
+                'message' => \MapasCulturais\i::__('Erro ao gerar PDF. Tente novamente.')
+            ], 500);
+        }
+    }
+
+    /**
+    * Gera PDF a partir de HTML
+    * 
+    * Utiliza DomPDF para converter HTML em PDF.
+    * 
+    * @param string $html Conteúdo HTML
+    * @param \MapasCulturais\Entities\Registration $registration Inscrição
+    * @return string Conteúdo do PDF gerado
+    */
+    private function generatePDFFromHTML($html, $registration) {
+        $options = new \Dompdf\Options();
+        $options->set('isRemoteEnabled', true);
+        $options->set('isHtml5ParserEnabled', true);
+        $options->set('defaultFont', 'DejaVu Sans');
+        
+        $dompdf = new \Dompdf\Dompdf($options);
+        $dompdf->loadHtml($html);
+        $dompdf->setPaper('A4', 'portrait');
+        $dompdf->render();
+        
+        return $dompdf->output();
+    }
+
+    /**
+    * Coleta anexos PDF de uma inscrição
+    * 
+    * Percorre os arquivos da inscrição e coleta os que são PDF.
+    * 
+    * @param \MapasCulturais\Entities\Registration $registration Inscrição
+    * @return array Array com caminhos dos arquivos PDF
+    */
+    private function collectPDFAttachments($registration) {
+        $pdfs = [];
+        
+        foreach ($registration->files as $group => $files) {
+            if (!is_array($files)) {
+                $files = [$files];
+            }
+            
+            foreach ($files as $file) {
+                if ($file->mimeType === 'application/pdf' && file_exists($file->path)) {
+                    $pdfs[] = $file->path;
+                }
+            }
+        }
+        
+        return $pdfs;
+    }
+
+    /**
+    * Mescla múltiplos PDFs em um único PDF
+    * 
+    * Utiliza FPDI para mesclar o PDF principal com os anexos.
+    * 
+    * @param string $mainPdfContent Conteúdo do PDF principal
+    * @param array $attachmentPaths Caminhos dos PDFs anexos
+    * @return string Conteúdo do PDF mesclado
+    */
+    private function mergePDFs($mainPdfContent, $attachmentPaths) {
+        $pdf = new \setasign\Fpdi\Fpdi();
+        
+        // 1. Adicionar PDF principal
+        $tmpMain = tempnam(sys_get_temp_dir(), 'main_');
+        file_put_contents($tmpMain, $mainPdfContent);
+        
+        try {
+            $pageCount = $pdf->setSourceFile($tmpMain);
+            for ($i = 1; $i <= $pageCount; $i++) {
+                $tplId = $pdf->importPage($i);
+                $size = $pdf->getTemplateSize($tplId);
+                $pdf->AddPage($size['orientation'], [$size['width'], $size['height']]);
+                $pdf->useTemplate($tplId);
+            }
+        } catch (\Exception $e) {
+            error_log("Erro ao adicionar PDF principal: " . $e->getMessage());
+        }
+        
+        unlink($tmpMain);
+        
+        // 2. Adicionar anexos
+        foreach ($attachmentPaths as $path) {
+            if (file_exists($path)) {
+                try {
+                    $pageCount = $pdf->setSourceFile($path);
+                    for ($i = 1; $i <= $pageCount; $i++) {
+                        $tplId = $pdf->importPage($i);
+                        $size = $pdf->getTemplateSize($tplId);
+                        $pdf->AddPage($size['orientation'], [$size['width'], $size['height']]);
+                        $pdf->useTemplate($tplId);
+                    }
+                } catch (\Exception $e) {
+                    error_log("Erro ao adicionar anexo {$path}: " . $e->getMessage());
+                }
+            }
+        }
+        
+        return $pdf->Output('S'); // Retorna como string
+    }
+
+    /**
+    * Sanitiza nome de arquivo
+    * 
+    * Remove caracteres inválidos de nomes de arquivo.
+    * 
+    * @param string $str String original
+    * @return string String sanitizada
+    */
+    private function sanitizeFilename($str) {
+        return preg_replace('/[^a-zA-Z0-9_\-]/', '_', $str);
+    }
+
 }

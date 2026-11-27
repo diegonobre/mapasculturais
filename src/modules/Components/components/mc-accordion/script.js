@@ -1,15 +1,38 @@
 
 app.component('mc-accordion', {
     template: $TEMPLATES['mc-accordion'],
+    emits: ['toggle', 'open', 'close'],
+
+    props: {
+        withText: {
+            type: Boolean,
+            default: false,
+        },
+        openOnArrow: {
+            type: Boolean,
+            default: false,
+        },
+        open: {
+            type: Boolean,
+            default: false,
+        },
+    },
 
     data() {
         return {
-            active: false,
+            active: this.open,
         }
     },
+    
     methods: {
-        toggle() {
-          this.active= !this.active;
+        toggle(icon) {
+            if (this.openOnArrow && !icon) {
+                return; 
+            }
+            
+            this.active = !this.active;
+            this.$emit('toggle')
+            this.$emit(this.active ? 'open' : 'close')
         },
     },
 });

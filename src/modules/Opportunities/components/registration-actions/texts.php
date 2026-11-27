@@ -7,6 +7,7 @@ return [
     'Campo não identificado' => i::__('Campo não identificado'),
     'Nome do projeto' => i::__('Nome do projeto'),
     'Espaço' => i::__('Espaço'),
+    'Vai concorrer às cotas?' => i::__('Vai concorrer às cotas?'),
     'Validado' => i::__('Campos validados com sucesso!'),
     'Corrija os erros indicados' => i::__('Corrija os erros indicados'),
     'Enviando' => i::__('Enviando'),
@@ -16,4 +17,6 @@ return [
     'Segmento artistico-cultural' => i::__('Segmento artistico-cultural'),
     'Meta' => i::__('Meta'),
     'Entrega' => i::__('Entrega'),
+    'Quer enviar seu recurso?' => i::__('Quer enviar seu recurso?'),
+    'Quer enviar sua inscrição?' => i::__('Quer enviar sua inscrição?'),
 ];

@@ -4,9 +4,27 @@ namespace MapasCulturais\AuthProviders;
 use MapasCulturais\App;
 use MapasCulturais\Entities;
 
+/**
+ * Provedor de autenticação Opauth para OpenID
+ * 
+ * Implementa autenticação via Opauth para provedores OpenID
+ * 
+ * @package MapasCulturais\AuthProviders
+ */
 class OpauthOpenId extends \MapasCulturais\AuthProvider{
+    /**
+     * Instância do Opauth
+     * @var \Opauth
+     */
     protected $opauth;
 
+    /**
+     * Inicializa o provedor de autenticação
+     * 
+     * Configura as rotas e hooks necessários para autenticação via OpenID
+     * 
+     * @return void
+     */
     protected function _init() {
         $app = App::i();
 
@@ -31,7 +49,9 @@ class OpauthOpenId extends \MapasCulturais\AuthProvider{
             'security_timeout' => $config['timeout'],
             'host' => preg_replace('#^(https?\:\/\/[^\/]*)/.*#', '$1', $url),
             'path' => $config['path'],
-            'callback_url' => $app->createUrl('auth','response')
+            'callback_url' => $app->createUrl('auth','response'),
+            // Keep auth payload in session — avoid unserialize() of attacker-controlled GET/POST.
+            'callback_transport' => 'session',
         ];
 
         $opauth = new \Opauth($opauth_config, false );
@@ -43,7 +63,6 @@ class OpauthOpenId extends \MapasCulturais\AuthProvider{
                 $app->redirect($config['logout_url'] . '?next=' . $app->baseUrl);
             });
         }
-
 
 
         // add actions to auth controller
@@ -74,12 +93,18 @@ class OpauthOpenId extends \MapasCulturais\AuthProvider{
         });
     }
 
+    /**
+     * Limpa a sessão do usuário
+     * 
+     * @return void
+     */
     public function _cleanUserSession() {
         unset($_SESSION['opauth']);
     }
 
     /**
-     * Returns the URL to redirect after authentication
+     * Retorna a URL para redirecionamento após autenticação
+     * 
      * @return string
      */
     public function getRedirectPath(){
@@ -92,7 +117,8 @@ class OpauthOpenId extends \MapasCulturais\AuthProvider{
     }
 
     /**
-     * Returns the Opauth authentication response or null if the user not tried to authenticate
+     * Retorna a resposta de autenticação do Opauth ou null se o usuário não tentou autenticar
+     * 
      * @return array|null
      */
     protected function _getResponse(){
@@ -107,10 +133,10 @@ class OpauthOpenId extends \MapasCulturais\AuthProvider{
                 $response = key_exists('opauth', $_SESSION) ? $_SESSION['opauth'] : null;
                 break;
             case 'post':
-                $response = unserialize(base64_decode( $_POST['opauth'] ));
+                $response = unserialize(base64_decode($_POST['opauth'] ?? ''), ['allowed_classes' => false]);
                 break;
             case 'get':
-                $response = unserialize(base64_decode( $_GET['opauth'] ));
+                $response = unserialize(base64_decode($_GET['opauth'] ?? ''), ['allowed_classes' => false]);
                 break;
             default:
                 $app->log->error('Opauth Error: Unsupported callback_transport.');
@@ -121,7 +147,10 @@ class OpauthOpenId extends \MapasCulturais\AuthProvider{
 
 
     /**
-     * Check if the Opauth response is valid. If it is valid, the user is authenticated.
+     * Verifica se a resposta do Opauth é válida
+     * 
+     * Se for válida, o usuário está autenticado
+     * 
      * @return boolean
      */
     protected function _validateResponse(){
@@ -160,6 +189,11 @@ class OpauthOpenId extends \MapasCulturais\AuthProvider{
     }
 
 
+    /**
+     * Obtém o usuário autenticado
+     * 
+     * @return \MapasCulturais\Entities\User|null
+     */
     public function _getAuthenticatedUser() {
         $user = null;
         if($this->_validateResponse()){
@@ -178,8 +212,9 @@ class OpauthOpenId extends \MapasCulturais\AuthProvider{
 
 
     /**
-     * Process the Opauth authentication response and creates the user if it not exists
-     * @return boolean true if the response is valid or false if the response is not valid
+     * Processa a resposta de autenticação do Opauth e cria o usuário se não existir
+     * 
+     * @return boolean true se a resposta for válida ou false se não for válida
      */
     public function processResponse(){
         // se autenticou
@@ -205,6 +240,12 @@ class OpauthOpenId extends \MapasCulturais\AuthProvider{
         }
     }
 
+    /**
+     * Cria um novo usuário a partir da resposta de autenticação
+     * 
+     * @param array $response Resposta de autenticação do Opauth
+     * @return \MapasCulturais\Entities\User
+     */
     protected function _createUser($response) {
         $app = App::i();
 

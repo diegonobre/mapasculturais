@@ -13,6 +13,7 @@ $this->import('
 ?>
 <div :class="['home-header', {'home-header--withBanner' : banner}] ">
     <div class="home-header__content">
+        <?php  $this->applyTemplateHook('home-header-content', 'before') ?>
 
         <div class="home-header__main">
             <label class="home-header__title">
@@ -23,29 +24,15 @@ $this->import('
             </p>
         </div>
 
-        <div v-if="banner || secondBanner" class="home-header__banners">
-            <div v-if="banner" class="home-header__banner">
-                <a v-if="bannerLink" :href="bannerLink" :download="downloadableLink ? '' : undefined"  :target="!downloadableLink ? '_blank' : null">
-                    <img :src="banner" />
-                </a>
-                <img v-if="!bannerLink" :src="banner" />
-            </div>
+        <div v-if="banner || secondBanner || thirdBanner" class="home-header__banners">
+            <?php $this->part('first-banner'); ?>
 
-            <div v-if="secondBanner" class="home-header__banner">
-                <a v-if="secondBannerLink" :href="secondBannerLink" :download="secondDownloadableLink ? '' : undefined"  :target="!secondDownloadableLink ? '_blank' : null">
-                    <img :src="secondBanner" />
-                </a>
-                <img v-if="!secondBannerLink" :src="secondBanner" />
-            </div>
+            <?php $this->part('second-banner'); ?>
 
-            <div v-if="thirdBanner" class="home-header__banner">
-                <a v-if="thirdBannerLink" :href="thirdBannerLink" :download="thirdDownloadableLink ? '' : undefined"  :target="!thirdDownloadableLink ? '_blank' : null">
-                    <img :src="thirdBanner" />
-                </a>
-                <img v-if="!thirdBannerLink" :src="thirdBanner" />
-            </div>
+            <?php $this->part('third-banner'); ?>
         </div>
   
+        <?php  $this->applyTemplateHook('home-header-content', 'after') ?>
     </div>
     <div class="home-header__background">
         <div class="img">

@@ -7,7 +7,14 @@ app.component('opportunity-registrations-table', {
         },
         visibleColumns: {
             type: Array,
-            default: ["agent", "status", "category", "consolidatedResult", "score", "editable"],
+            default: [
+                "number",
+                "agent",
+                "consolidatedResult",
+                "appliedPointReward",
+                "score",
+                "status",
+            ],
         },
         identifier: {
             type: String,
@@ -39,7 +46,7 @@ app.component('opportunity-registrations-table', {
             readonly: true,
             type: "array",
             length: 255,
-            label: text("Elegível para as cotas"),
+            label: text("Elegível para cotas"),
             isPK: false
         };
 
@@ -89,8 +96,7 @@ app.component('opportunity-registrations-table', {
         const default_select = $MAPAS.config.opportunityRegistrationTable.defaultSelect;
         const defaultAvailable = $MAPAS.config.opportunityRegistrationTable.defaultAvailable;
         
-        const avaliableFields = defaultAvailable.length > 0 ? [...defaultAvailable] : [];
-
+        let avaliableFields = defaultAvailable.length > 0 ? [...defaultAvailable] : [];
         let visible = this.visibleColumns.join(',');
         let order = 'status DESC,consolidatedResult DESC';
         let consolidatedResultOrder = 'consolidatedResult';
@@ -111,6 +117,35 @@ app.component('opportunity-registrations-table', {
                 }
             }
         }
+
+        const sortedAvaliableFields = [...avaliableFields];
+        const steppedFields = sortedAvaliableFields.filter(item => item.step !== undefined);
+
+        // Ordena por step.displayOrder e depois por displayOrder
+        const sortedElements = [...steppedFields].sort((a, b) => {
+            const stepSortKeyA = a.step?.displayOrder ?? Infinity;
+            const stepSortKeyB = b.step?.displayOrder ?? Infinity;
+            
+        
+            if (stepSortKeyA !== stepSortKeyB) {
+                return stepSortKeyA - stepSortKeyB;
+            }
+        
+            const displayOrderA = a.displayOrder ?? Infinity;
+            const displayOrderB = b.displayOrder ?? Infinity;
+        
+            return displayOrderA - displayOrderB;
+        });
+        
+        // Preenche de volta no array original mantendo os elementos que não têm step/displayOrder nas mesmas posições
+        let sortedIndex = 0;
+        for (let i = 0; i < sortedAvaliableFields.length; i++) {
+            if (sortedAvaliableFields[i].step !== undefined) {
+                sortedAvaliableFields[i] = sortedElements[sortedIndex++];
+            }
+        }
+
+        avaliableFields = sortedAvaliableFields;
 
         if(isTechnicalEvaluationPhase){
             consolidatedResultOrder = 'consolidatedResult AS FLOAT';
@@ -149,6 +184,11 @@ app.component('opportunity-registrations-table', {
                     order = '@quota';
                     sortOptions.splice(0, 0, {value: '@quota', label: this.text('classificação final')});
                 }
+            }   
+            
+            // Exibe por padrão as faixas/linhas quando as mesmas existe e estão configuradas
+            if(this.phase.registrationRanges && this.phase.registrationRanges.length > 0) {
+                visible += ',range';
             }
         }
         
@@ -173,7 +213,8 @@ app.component('opportunity-registrations-table', {
             hadTechnicalEvaluationPhase,
             isTechnicalEvaluationPhase,
             defaultHeaders,
-            default_select
+            default_select,
+            downloadZipInLoandingEntity: null
         }
     },
 
@@ -185,7 +226,7 @@ app.component('opportunity-registrations-table', {
             return $MAPAS.config.opportunityRegistrationTable.evaluationStatusDict;
         },
         statusEvaluationResult () {
-            let evaluationType = this.phase.evaluationMethodConfiguration ? this.phase.evaluationMethodConfiguration.type : null;
+            let evaluationType = this.phase.evaluationMethodConfiguration ? this.phase.evaluationMethodConfiguration.type?.id : null;
             return evaluationType ? this.statusEvaluation[evaluationType] : null;
         },
         status () {
@@ -229,6 +270,26 @@ app.component('opportunity-registrations-table', {
             }
             return null;
         },
+        hasEvaluationMethodTechnical (){
+            const type = this.phase.evaluationMethodConfiguration?.type?.id;
+            const phases = $MAPAS.opportunityPhases;
+            let result = false;
+
+            for (const phase of phases){
+                if(phase.id == this.phase.id){
+                    break;
+                }
+
+                const phaseType = phase.evaluationMethodConfiguration ? phase.evaluationMethodConfiguration.type?.id : phase.type.id;
+
+                if(phaseType == "technical"){
+                    result = true;
+                    break;
+                }
+            }
+
+            return result;
+        },
         headers () {
             let itens = this.defaultHeaders;
 
@@ -240,6 +301,7 @@ app.component('opportunity-registrations-table', {
                     value: item.fieldName
                 })));
             }
+            
 
             if(this.phase.evaluationMethodConfiguration){
                 itens.splice(2,0,{ text: "Avaliação", value: "consolidatedResult"});
@@ -280,29 +342,32 @@ app.component('opportunity-registrations-table', {
 
             if(this.phase.isLastPhase){
                 itens.splice(2,0,{ text: "Status", value: "consolidatedResult"});
-                itens.push({ text: __('resultado final', 'opportunity-registrations-table'), value: "status", width: '250px', stickyRight: true})
+                itens.push({ text: __('Resultado final', 'opportunity-registrations-table'), value: "status", width: '250px', stickyRight: true})
             } else {
                 itens.push({ text: __('status', 'opportunity-registrations-table'), value: "status", width: '250px', stickyRight: true})
             }
 
-            let type = this.phase.evaluationMethodConfiguration?.type.id || '';
-            let phases = $MAPAS.opportunityPhases;
-            let hasEvaluationMethodTechnical = false;
-
-            for (const phase of phases){
-                if(phase.id == this.phase.id){
-                    break;
+            // Pontuação final (score = avaliação + bônus). Exibir na fase técnica,
+            // em fases posteriores a uma técnica, na publicação do resultado, ou
+            // quando o edital tem (ou terá) fase técnica — senão o default de
+            // sistema (Avaliação/Bônus/Pontuação) some na lista da 1ª fase.
+            if(this.shouldShowScoreColumn) {
+                if(!itens.some(item => item.value === 'score')) {
+                    itens.push({
+                        text: this.text('Pontuação'),
+                        value: 'score',
+                    });
                 }
-
-                let phaseType = phase.evaluationMethodConfiguration ? phase.evaluationMethodConfiguration.type.id : phase.type.id;
-                if(phaseType == "technical"){
-                    hasEvaluationMethodTechnical = true;
-                    break;
-                }
+            } else {
+                itens = itens.filter(item => !['score', 'appliedPointReward'].includes(item.value));
             }
 
-            if(type == "technical" || hasEvaluationMethodTechnical){
-                itens.splice(3,0,{ text: "Pontuação", value: "score"});
+            // Mantém Avaliação → Bônus → Pontuação sempre lado a lado
+            itens = this.groupScoreRelatedColumns(itens);
+
+            // eligible só faz sentido com políticas afirmativas / contexto técnico
+            if(!(this.isTechnicalEvaluationPhase || this.hasEvaluationMethodTechnical)) {
+                itens = itens.filter(item => item.value !== 'eligible');
             }
 
             if(this.avaliableColumns) {
@@ -311,13 +376,60 @@ app.component('opportunity-registrations-table', {
                 });
             }
 
-
             return itens;
         },
+        /**
+         * True se qualquer fase do edital for avaliação técnica (incluindo
+         * fases futuras). hadTechnicalEvaluationPhase / hasEvaluationMethodTechnical
+         * só olham para trás — na 1ª fase isso escondia Pontuação mesmo com
+         * fase técnica no edital (ex.: /lista-de-inscricoes/98/ com fase 107).
+         */
+        opportunityHasTechnicalEvaluation() {
+            const phases = $MAPAS.opportunityPhases || [];
+            return phases.some((phase) => {
+                const typeId = phase.evaluationMethodConfiguration?.type?.id
+                    ?? phase.type?.id
+                    ?? phase.type;
+                return typeId === 'technical';
+            });
+        },
+        shouldShowScoreColumn() {
+            return !!(
+                this.isTechnicalEvaluationPhase
+                || this.hasEvaluationMethodTechnical
+                || this.hadTechnicalEvaluationPhase
+                || this.phase.isLastPhase
+                || this.opportunityHasTechnicalEvaluation
+            );
+        },
         select() {
-            const fields = this.avaliableFields.map((item) => item.fieldName);
+            let avaliableFields = this.avaliableFields.map((item) => item.fieldName);
+            
+            if(this.isTechnicalEvaluationPhase) {
+                avaliableFields.push('usingQuota')
+                avaliableFields.push('quotas')
+                avaliableFields.push('tiebreaker')
+            }
 
-            return [this.default_select, ...fields].join(',');
+            let fields = [...this.default_select.split(','), ...avaliableFields];
+
+            if(this.shouldShowScoreColumn && !fields.includes('score')) {
+                fields.push('score');
+            }
+            if(this.shouldShowScoreColumn && !fields.includes('appliedPointReward')) {
+                fields.push('appliedPointReward');
+            }
+
+            if(!this.shouldShowScoreColumn) {
+                fields = fields.filter(item => item !== 'score' && item !== 'appliedPointReward');
+            }
+
+            if(!(this.isTechnicalEvaluationPhase || this.hasEvaluationMethodTechnical)) {
+                fields = fields.filter(item => item !== 'eligible');
+            }
+            
+            return fields.join(',');
+
         },
         previousPhase() {
             const phases = $MAPAS.opportunityPhases;
@@ -327,6 +439,56 @@ app.component('opportunity-registrations-table', {
     },
 
     methods: {
+        /**
+         * Agrupa Avaliação → Bônus por pontuação → Pontuação (nota final).
+         */
+        groupScoreRelatedColumns(itens) {
+            const groupOrder = ['consolidatedResult', 'appliedPointReward', 'score'];
+            const groupItems = [];
+            const rest = [];
+
+            for (const item of itens) {
+                const key = item.value || item.slug;
+                if (groupOrder.includes(key)) {
+                    groupItems.push(item);
+                } else {
+                    rest.push(item);
+                }
+            }
+
+            if (!groupItems.length) {
+                return itens;
+            }
+
+            const byKey = {};
+            for (const item of groupItems) {
+                byKey[item.value || item.slug] = item;
+            }
+            const orderedGroup = groupOrder.map(key => byKey[key]).filter(Boolean);
+
+            // Insere o bloco na posição da primeira coluna do grupo que existia
+            let insertAt = itens.findIndex(item => groupOrder.includes(item.value || item.slug));
+            if (insertAt < 0) {
+                insertAt = Math.min(2, rest.length);
+            }
+            // Ajusta insertAt para o índice equivalente em `rest`
+            let restInsertAt = 0;
+            let seen = 0;
+            for (let i = 0; i < itens.length && seen < insertAt; i++) {
+                const key = itens[i].value || itens[i].slug;
+                if (!groupOrder.includes(key)) {
+                    restInsertAt++;
+                }
+                seen++;
+            }
+
+            return [
+                ...rest.slice(0, restInsertAt),
+                ...orderedGroup,
+                ...rest.slice(restInsertAt),
+            ];
+        },
+
         getStatus(actualStatus) {
             return this.statusDict.find(status => status.value === actualStatus);
         },
@@ -498,6 +660,17 @@ app.component('opportunity-registrations-table', {
             if (!editSentTimestamp && editableUntil.isPast()) {
                 return 'missed';
             }
+        },
+        downloadZipInLoanding(entity) {
+            if(entity.id == this.downloadZipInLoandingEntity) {
+                return true;
+            }
+
+            return false;
+        },
+        generateOrDownloadZip(entity) {
+            const apiUrl = Utils.createUrl('registration', 'createZipFiles', { id: entity.id });
+            window.open(apiUrl, '_blank');
         }
     }
 });

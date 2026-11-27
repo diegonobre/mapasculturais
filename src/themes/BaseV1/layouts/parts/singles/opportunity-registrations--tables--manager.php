@@ -34,7 +34,7 @@ use MapasCulturais\i;
     <div class="placeholder" ng-click="filter_dropdown = ''"><?php i::_e("Colunas Habilitadas:") ?></div>
     <div class="submenu-dropdown" style="background: #fff;">
         <div class="filter-search" style="padding: 5px;">
-            <input type="text" ng-model="filter_dropdown" style="width:100%;" placeholder="Busque pelo nome dos campos do formulário de inscrição e selecione as colunas visíveis" />
+            <input type="text" ng-model="filter_dropdown" style="width:100%;" placeholder="<?= i::__('Busque pelo nome dos campos do formulário de inscrição e selecione as colunas visíveis') ?>" />
         </div>
         <ul class="filter-list">
             <li ng-repeat="field in data.defaultSelectFields | filter:filter_dropdown" ng-if="field.required"
@@ -89,7 +89,13 @@ use MapasCulturais\i;
                 <?php i::_e("Avaliação");?>
             </th>
             <th ng-show="data.registrationTableColumns.status" class="registration-status-col">
-                <mc-select placeholder="Status" model="registrationsFilters['status']" data="data.registrationStatuses"></mc-select>
+                <mc-select placeholder="<?php i::esc_attr_e("Status");?>" model="registrationsFilters['status']" data="data.registrationStatuses"></mc-select>
+            </th>
+            <th ng-show="data.registrationTableColumns.sealStatus" class="registration-status-col">
+                <mc-select placeholder="<?php i::esc_attr_e('Status do Selo') ?>" model="registrationsFilters['sealStatus']" data="data.sealStatuses"></mc-select>
+            </th>
+            <th ng-if="data.hasSealExemptionConfig" ng-show="data.registrationTableColumns.sealExemption" class="registration-status-col">
+                <?php i::_e("Isenção");?>
             </th>
 
             <?php $this->applyTemplateHook('registration-list-header','end'); ?>
@@ -156,6 +162,21 @@ use MapasCulturais\i;
                 <?php else: ?>
                     <mc-select model="reg" data="data.registrationStatusesNames" getter="getRegistrationStatus" setter="setRegistrationStatus"></mc-select>
                 <?php endif; ?>
+            </td>
+            <td ng-show="data.registrationTableColumns.sealStatus" class="registration-status-col">
+                <span ng-if="reg.sealStatus" class="seal-status-badge" ng-class="'status-' + reg.sealStatus">
+                    <span ng-if="reg.sealStatus === 'fully_valid'"><?php i::_e('Totalmente Válido') ?></span>
+                    <span ng-if="reg.sealStatus === 'partially_valid'"><?php i::_e('Parcialmente Válido') ?></span>
+                    <span ng-if="reg.sealStatus === 'invalid'"><?php i::_e('Inválido') ?></span>
+                </span>
+            </td>
+            <td ng-if="data.hasSealExemptionConfig" ng-show="data.registrationTableColumns.sealExemption" class="registration-status-col">
+                <span ng-if="reg.sealExemptionStatus === 'granted'" class="seal-exemption-badge">
+                    <?php i::_e('Dispensada por selos') ?>
+                </span>
+                <span ng-if="reg.sealExemptionStatus !== 'granted'" class="seal-exemption-badge seal-exemption-badge--not-granted">
+                    <?php i::_e('Não isenta') ?>
+                </span>
             </td>
             <?php $this->applyTemplateHook('registration-list-item','end'); ?>
         </tr>

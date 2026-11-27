@@ -5,7 +5,7 @@ namespace MapasCulturais\Entities;
 use Doctrine\ORM\Mapping as ORM;
 use MapasCulturais\Traits;
 use MapasCulturais\App;
-
+use MapasCulturais\UserInterface;
 
 /**
  * Agent
@@ -56,6 +56,16 @@ class Agent extends \MapasCulturais\Entity
 
     const STATUS_RELATED = -1;
     const STATUS_INVITED = -2;
+
+    /**
+     * Issue #32: metadado de documento exigido por tipo de agente
+     * quando a config "agents.requiredDocumentsByType" está ativa
+     * (1 = Individual exige CPF; 2 = Coletivo exige CNPJ).
+     */
+    public const DOCUMENT_METADATA_BY_TYPE = [
+        1 => 'cpf',
+        2 => 'cnpj',
+    ];
 
     protected $__enableMagicGetterHook = true;
 
@@ -162,7 +172,7 @@ class Agent extends \MapasCulturais\Entity
     /**
      * @var \MapasCulturais\Entities\User
      *
-     * @ORM\ManyToOne(targetEntity="MapasCulturais\Entities\User", fetch="LAZY")
+     * @ORM\ManyToOne(targetEntity="MapasCulturais\Entities\User", inversedBy="agents", fetch="LAZY")
      * @ORM\JoinColumns({
      *   @ORM\JoinColumn(name="user_id", referencedColumnName="id", onDelete="CASCADE")
      * })
@@ -178,46 +188,46 @@ class Agent extends \MapasCulturais\Entity
     protected $userId;
 
     /**
-    * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\Space", mappedBy="owner", cascade={"remove"}, orphanRemoval=true)
+    * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\Space", mappedBy="owner", cascade={"remove"})
     */
     protected $_spaces;
 
 
     /**
-    * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\Project", mappedBy="owner", cascade={"remove"}, orphanRemoval=true)
+    * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\Project", mappedBy="owner", cascade={"remove"})
     */
     protected $_projects;
 
 
     /**
-    * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\AgentOpportunity", mappedBy="owner", cascade={"remove"}, orphanRemoval=true)
+    * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\AgentOpportunity", mappedBy="owner", cascade={"remove"})
     */
     protected $_ownedOpportunities;
 
 
     /**
-    * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\Event", mappedBy="owner", cascade={"remove"}, orphanRemoval=true)
+    * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\Event", mappedBy="owner", cascade={"remove"})
     */
     protected $_events;
     
     /**
      * @var \MapasCulturais\Entities\AgentOpportunity[] Opportunities
      *
-     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\AgentOpportunity", mappedBy="ownerEntity", cascade={"remove"}, orphanRemoval=true)
+     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\AgentOpportunity", mappedBy="ownerEntity", cascade={"remove"})
      * @ORM\JoinColumn(name="id", referencedColumnName="object_id", onDelete="CASCADE")
     */
     protected $_relatedOpportunities;
 
 
     /**
-    * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\AgentMeta", mappedBy="owner", cascade={"remove","persist"}, orphanRemoval=true)
+    * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\AgentMeta", mappedBy="owner", cascade={"remove","persist"}, fetch="EAGER")
     */
     protected $__metadata;
 
     /**
      * @var \MapasCulturais\Entities\AgentFile[] Files
      *
-     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\AgentFile", mappedBy="owner", cascade={"remove"}, orphanRemoval=true)
+     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\AgentFile", mappedBy="owner", cascade={"remove"})
      * @ORM\JoinColumn(name="id", referencedColumnName="object_id", onDelete="CASCADE")
     */
     protected $__files;
@@ -225,7 +235,7 @@ class Agent extends \MapasCulturais\Entity
     /**
      * @var \MapasCulturais\Entities\AgentAgentRelation[] Agent Relations
      *
-     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\AgentAgentRelation", mappedBy="owner", cascade={"remove"}, orphanRemoval=true)
+     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\AgentAgentRelation", mappedBy="owner", cascade={"remove"})
      * @ORM\JoinColumn(name="id", referencedColumnName="object_id", onDelete="CASCADE")
     */
     protected $__agentRelations;
@@ -233,7 +243,7 @@ class Agent extends \MapasCulturais\Entity
     /**
      * @var \MapasCulturais\Entities\AgentTermRelation[] TermRelation
      *
-     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\AgentTermRelation", fetch="LAZY", mappedBy="owner", cascade={"remove"}, orphanRemoval=true)
+     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\AgentTermRelation", fetch="LAZY", mappedBy="owner", cascade={"remove"})
      * @ORM\JoinColumn(name="id", referencedColumnName="object_id", onDelete="CASCADE")
     */
     protected $__termRelations;
@@ -242,13 +252,13 @@ class Agent extends \MapasCulturais\Entity
     /**
      * @var \MapasCulturais\Entities\AgentSealRelation[] AgentSealRelation
      *
-     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\AgentSealRelation", fetch="LAZY", mappedBy="owner", cascade={"remove"}, orphanRemoval=true)
+     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\AgentSealRelation", fetch="LAZY", mappedBy="owner", cascade={"remove"})
      * @ORM\JoinColumn(name="id", referencedColumnName="object_id", onDelete="CASCADE")
     */
     protected $__sealRelations;
 
     /**
-     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\AgentPermissionCache", mappedBy="owner", cascade={"remove"}, orphanRemoval=true, fetch="EXTRA_LAZY")
+     * @ORM\OneToMany(targetEntity="MapasCulturais\Entities\AgentPermissionCache", mappedBy="owner", cascade={"remove"}, fetch="EXTRA_LAZY")
      */
     protected $__permissionsCache;
 
@@ -279,12 +289,24 @@ class Agent extends \MapasCulturais\Entity
 
 
     /**
-     * Constructor
+     * 
+     * @param null|UserInterface $user 
+     * @param null|int $type 
      */
-    public function __construct($user = null) {
-        $this->user = $user ? $user : App::i()->user;
-        $this->type = 1;
-        $this->parentId = !App::i()->user->is('guest') ? App::i()->user->profile->id : null;
+    public function __construct(?UserInterface $user = null, ?int $type = 1) {
+        $app = App::i();
+        if(!$user && !$app->user->is('guest')) {
+            $user = $app->user;
+        }
+
+        if($user instanceof User) {
+            $this->user = $user ? $user : App::i()->user;
+            if($parent = $user->profile) {
+                $this->parentId = $parent->id;
+            }
+        }
+
+        $this->type = $type;
 
         parent::__construct();
     }
@@ -318,16 +340,51 @@ class Agent extends \MapasCulturais\Entity
         return $validations;
     }
 
+    /**
+     * Issue #32: retorna o metadado de documento (cpf/cnpj) exigido para este
+     * agente, combinando a config "agents.requiredDocumentsByType" (env
+     * AGENTS_REQUIRED_DOCUMENTS_BY_TYPE, default false) com o tipo atual.
+     *
+     * Retorna null quando a flag está desativada, quando o tipo não tem
+     * documento exigido ou quando o tipo ainda não foi definido.
+     */
+    public function requiredDocumentMetadata(): ?string
+    {
+        $app = App::i();
+
+        if (!($app->config['agents.requiredDocumentsByType'] ?? false)) {
+            return null;
+        }
+
+        $type_id = $this->_type ? (int) $this->_type : null;
+
+        return self::DOCUMENT_METADATA_BY_TYPE[$type_id] ?? null;
+    }
+
+    /**
+     * Issue #32: além das regras estáticas de metadados/validações, cpf/cnpj
+     * tornam-se obrigatórios conforme o tipo do agente quando a flag
+     * "agents.requiredDocumentsByType" está ativa. É o mesmo critério injetado
+     * na validação server-side (hook entity(Agent).validations do módulo
+     * AgentDocuments), garantindo que formulários e validação permaneçam
+     * coerentes. A exigência em si é sempre server-side: aqui apenas marcamos
+     * o campo para a interface.
+     */
+    public function isPropertyRequired($entity, $property)
+    {
+        return parent::isPropertyRequired($entity, $property)
+            || $this->requiredDocumentMetadata() === $property;
+    }
+
     public function setType($type)
     {
         $app = App::i();
 
-        if(!$app->user->is('admin') && $this->isNew() && $this->owner){
-            $this->_type = 2;
-        }else{
+        if($this->canUser('changeType')) {
             $this->_type = $type;
+        } else {
+            $this->_type = 2;
         }
-
     }
 
     function setAsUserProfile(){
@@ -431,6 +488,11 @@ class Agent extends \MapasCulturais\Entity
     }
 
     protected function _saveNested($flush = false) {
+        if($this->_newUser) {
+            $this->checkPermission('changeOwner');
+            $this->user = $this->_newUser;
+        }
+        
         if($this->_newParent !== false){
             $app = App::i();
 

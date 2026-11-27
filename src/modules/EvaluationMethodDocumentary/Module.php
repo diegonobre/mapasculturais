@@ -4,13 +4,33 @@ namespace EvaluationMethodDocumentary;
 use MapasCulturais\i;
 use MapasCulturais\App;
 use MapasCulturais\Entities;
+use MapasCulturais\Entities\EvaluationMethodConfiguration;
 use MapasCulturais\Entities\Registration;
 
 const STATUS_INVALID = 'invalid';
 const STATUS_VALID = 'valid';
 
-class Module extends \MapasCulturais\EvaluationMethod {
+class Module extends \MapasCulturais\EvaluationMethod
+{
+    protected function _export(EvaluationMethodConfiguration $evaluation_method_configuration): array
+    {
+        return [];
+    }
 
+    protected function _import(EvaluationMethodConfiguration $evaluation_method_configuration, array $data)
+    {
+        /** não precisa fazer nada */
+    }
+
+    protected function _getDefaultStatuses(EvaluationMethodConfiguration $evaluation_method_configuration): array
+    {
+        return [
+            Registration::STATUS_DRAFT => i::__('Rascunho'),
+            Registration::STATUS_SENT => i::__('Pendente'),
+            Registration::STATUS_APPROVED  => i::__('Válida'),
+            Registration::STATUS_INVALID => i::__('Inválida'),
+        ];
+    }
 
     public function getSlug() {
         return 'documentary';
@@ -170,7 +190,7 @@ class Module extends \MapasCulturais\EvaluationMethod {
             $sections = $result;
         });
 
-        $app->hook('POST(opportunity.applyEvaluationsDocumentary)', function() {
+        $app->hook('POST(opportunity.applyEvaluationsDocumentary)', function() use ($self) {
             $this->requireAuthentication();
 
             set_time_limit(0);
@@ -194,37 +214,36 @@ class Module extends \MapasCulturais\EvaluationMethod {
             }
             $new_status = intval($this->data['to']);
             
-            $apply_status = $this->data['status'] ?? false;
-            if ($apply_status == 'all') {
-                $status = 'r.status > 0';
-            } else {
-                $status = 'r.status = 1';
-            }
-    
             $opp->checkPermission('@control');
 
-            // pesquise todas as registrations da opportunity que esta vindo na request
-            $dql = "
-            SELECT 
-                r.id
-            FROM
-                MapasCulturais\Entities\Registration r
-            WHERE 
-                r.opportunity = :opportunity_id AND
-                r.consolidatedResult = :consolidated_result AND
-                r.status <> $new_status AND
-                $status
-            ";
-            $query = $app->em->createQuery($dql);
-        
-            $params = [
-                'opportunity_id' => $opp->id,
-                'consolidated_result' => $this->data['from']
-            ];
-    
-            $query->setParameters($params);
-    
-            $registrations = $query->getScalarResult();
+            if (($this->data['tabSelected'] ?? 'result') === 'registration') {
+                $registrations = $self->findRegistrationIdsForResultApplication(
+                    $opp,
+                    $this->data['registrationNumbers'] ?? [],
+                    $new_status
+                );
+            } else {
+                $apply_status = $this->data['status'] ?? false;
+                $status = $apply_status == 'all' ? 'r.status > 0' : 'r.status = 1';
+
+                $dql = "
+                SELECT
+                    r.id
+                FROM
+                    MapasCulturais\Entities\Registration r
+                WHERE
+                    r.opportunity = :opportunity_id AND
+                    r.consolidatedResult = :consolidated_result AND
+                    r.status <> $new_status AND
+                    $status
+                ";
+                $query = $app->em->createQuery($dql);
+                $query->setParameters([
+                    'opportunity_id' => $opp->id,
+                    'consolidated_result' => $this->data['from']
+                ]);
+                $registrations = $query->getScalarResult();
+            }
 
             $count = 0;
             $total = count($registrations);
@@ -233,7 +252,8 @@ class Module extends \MapasCulturais\EvaluationMethod {
             foreach ($registrations as $reg) {
                 $count++;
                 /** @var Registration $registration */
-                $registration = $app->repo('Registration')->find($reg['id']);
+                $registration_id = is_array($reg) ? $reg['id'] : $reg;
+                $registration = $app->repo('Registration')->find($registration_id);
                 $registration->skipSync = true;
                 $registration->__skipQueuingPCacheRecreation = true;
 
@@ -308,10 +328,17 @@ class Module extends \MapasCulturais\EvaluationMethod {
     }
 
     public function _getConsolidatedResult(Entities\Registration $registration, array $evaluations) {
-        $app = App::i();
+        if(empty($evaluations)){
+            $statuses = [
+                Entities\Registration::STATUS_DRAFT => 0,
+                Entities\Registration::STATUS_SENT => 0,
+                Entities\Registration::STATUS_INVALID => -1,
+                Entities\Registration::STATUS_NOTAPPROVED => -1,
+                Entities\Registration::STATUS_WAITLIST => -1,
+                Entities\Registration::STATUS_APPROVED => 1,
+            ];
 
-        if(is_array($evaluations) && count($evaluations) === 0){
-            return 0;
+            return $statuses[$registration->status] ?? 0;
         }
 
         $result = 1;
@@ -325,6 +352,17 @@ class Module extends \MapasCulturais\EvaluationMethod {
         }
 
         return $result;
+    }
+
+    /**
+     * Retorna o resultado consolidado aplicado
+     *
+     * @param Entities\Registration $registration
+     * @return string|int
+     */
+    public function _getConsolidatedAutoApplicationResult(Entities\Registration $registration): string|int
+    {
+        return $registration->consolidatedResult == 1 ? Registration::STATUS_APPROVED : Registration::STATUS_INVALID;
     }
 
     public function getEvaluationResult(Entities\RegistrationEvaluation $evaluation) {

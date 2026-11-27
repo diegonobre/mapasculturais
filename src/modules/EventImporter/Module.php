@@ -286,11 +286,11 @@ class Module extends \MapasCulturais\Module
                 ],
                 i::__('QUINTA') => [
                     i::__('Caso o evento ocorra neste dia informar um dos valores a seguir (sim,x,1) caso contrario deixar vazio'),
-                    i::__('')
+                    ""
                 ],
                 i::__('SEXTA') => [
                     i::__('Caso o evento ocorra neste dia informar um dos valores a seguir (sim,x,1) caso contrario deixar vazio'),
-                    i::__('')
+                    ""
                 ],
                 i::__('SABADO') => [
                     i::__('Caso o evento ocorra neste dia informar um dos valores a seguir (sim,x,1) caso contrario deixar vazio'),
@@ -401,7 +401,15 @@ class Module extends \MapasCulturais\Module
             'agent',
             new Definitions\FileGroup(
                 'event-import-file',
-                ['text/csv', 'application/excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'],
+                [
+                    'text/csv',
+                    'text/plain',
+                    'text/x-csv',
+                    'application/csv',
+                    'application/excel',
+                    'application/vnd.ms-excel',
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                ],
                 'O arquivo não e valido'
             )
         );

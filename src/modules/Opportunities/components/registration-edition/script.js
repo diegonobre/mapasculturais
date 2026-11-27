@@ -6,6 +6,10 @@ app.component('registration-edition', {
             type: Entity,
             required: true,
         },
+        editableFields: {
+            type: Boolean,
+            default: false
+        }
     },
 
     setup() {
@@ -20,9 +24,19 @@ app.component('registration-edition', {
     },
 
     computed: {
+        hasWorkplan () {
+            const opportunity = this.entity.workplanOpportunity ?? this.entity.opportunity.parent ?? this.entity.opportunity;
+            return Boolean(opportunity?.enableWorkplan);
+        },
+
+        isLastStep () {
+            return this.stepIndex === this.steps.length - 1;
+        },
+
         preview() {
             return this.entity.id === -1;
         },
+
         steps () {
             const steps = this.entity.opportunity.registrationSteps ?? [];
             const { category, proponentType, range } = this.entity;
@@ -30,20 +44,14 @@ app.component('registration-edition', {
             const filteredSteps = steps.filter((step) => {
                 const conditional = step.metadata?.conditional;
                 if (conditional) {
-                    if (conditional.categories) {
-                        if (category && !conditional.categories.includes(category)) {
-                            return false;
-                        }
+                    if (conditional.categories?.length && !conditional.categories.includes(category)) {
+                        return false;
                     }
-                    if (conditional.proponentTypes) {
-                        if (proponentType && !conditional.proponentTypes.includes(proponentType)) {
-                            return false;
-                        }
+                    if (conditional.proponentTypes?.length && !conditional.proponentTypes.includes(proponentType)) {
+                        return false;
                     }
-                    if (conditional.ranges) {
-                        if (range && !conditional.ranges.includes(range)) {
-                            return false;
-                        }
+                    if (conditional.ranges?.length && !conditional.ranges.includes(range)) {
+                        return false;
                     }
                 }
                 return true;
@@ -55,9 +63,45 @@ app.component('registration-edition', {
         step () {
             return this.steps[this.stepIndex];
         },
+
+        collectiveRelations() {
+            const relations = this.entity.agentRelations.coletivo ?? [];
+
+            return relations.map((relation) => {
+                if (relation?.agent instanceof Entity) {
+                    return relation;
+                }
+
+                if (relation?.agent?.id) {
+                    const agent = new Entity('agent', relation.agent.id);
+                    agent.populate(relation.agent);
+
+                    return {
+                        ...relation,
+                        agent,
+                    };
+                }
+
+                return relation;
+            });
+        },
+
+        collectiveAvatarRequired() {
+            const avatarConfig = this.entity.opportunity.proponentAgentRelationAvatar ?? {};
+            const relationConfig = this.entity.opportunity.proponentAgentRelation ?? {};
+            return relationConfig[this.entity.proponentType] === true && avatarConfig[this.entity.proponentType] === true;
+        },
     },
 
     watch: {
+        steps(steps, previousSteps) {
+            const previousStep = previousSteps[this.stepIndex];
+            const previousStepId = previousStep?._id ?? previousStep?.id;
+            const newStepIndex = steps.findIndex((step) => (step._id ?? step.id) === previousStepId);
+
+            this.stepIndex = newStepIndex >= 0 ? newStepIndex : 0;
+        },
+
         stepIndex() {
             window.location.hash = `#etapa_${this.stepIndex + 1}`;
         },

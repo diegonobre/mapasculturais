@@ -8,72 +8,28 @@ use MapasCulturais\i;
 
 $this->import('
     mc-card
+    entity-data
 ');
 ?>
 <div class="col-12 agent-data">
     <template v-if="verifyFields()">
         <div class="agent-data__title">
-            <h4 class="title bold" v-if="alwaysShowTitle || (entity.telefonePublico || entity.emailPublico)"><?php i::_e("Dados Pessoais") ?>
+            <h4 class="title bold" v-if="alwaysShowTitle || (entity.telefonePublico || entity.emailPublico)"><?php i::_e("Dados pessoais") ?>
                 <?php if($this->isEditable()): ?>
                     <?php $this->info('cadastro -> configuracoes-entidades -> dados-pessoais') ?>
                 <?php endif; ?>
             </h4>
         </div>
         <div class="agent-data__fields">
-            <div v-if="entity.nomeCompleto && !showOnlyPublicData" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("Nome Completo") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.nomeCompleto}}</label>
-                </div>
-            </div>
-            <div v-if="entity.nomeSocial && !showOnlyPublicData" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("Nome Social") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.nomeSocial}}</label>
-                </div>
-            </div>
-            <div v-if="entity.cpf && !showOnlyPublicData" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("CPF") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.cpf}}</label>
-                </div>
-            </div>
-            <div v-if="entity.cnpj && !showOnlyPublicData" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("MEI (CNPJ do MEI)") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.cnpj}}</label>
-                </div>
-            </div>
-            <div v-if="entity.telefonePublico" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("Telefone Público") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.telefonePublico}}</label>
-                </div>
-            </div>
-            <div v-if="entity.telefone1 && !showOnlyPublicData" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("Telefone Privado 1") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.telefone1}}</label>
-                </div>
-            </div>
-            <div v-if="entity.telefone2 && !showOnlyPublicData" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("Telefone Privado 2") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.telefone2}}</label>
-                </div>
-            </div>
-            <div v-if="entity.emailPrivado && !showOnlyPublicData" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("Email Pessoal") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.emailPrivado}}</label>
-                </div>
-            </div>
-            <div v-if="entity.emailPublico" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("Email Púbico") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.emailPublico}}</label>
-                </div>
-            </div>
+            <entity-data v-if="entity.nomeCompleto && !showOnlyPublicData" class="agent-data__fields--field" :entity="entity" prop="nomeCompleto" label="<?php i::_e("Nome completo")?>"></entity-data>
+            <entity-data v-if="entity.nomeSocial && !showOnlyPublicData" class="agent-data__fields--field" :entity="entity" prop="nomeSocial" label="<?php i::_e("Nome social")?>"></entity-data>
+            <entity-data v-if="entity.cpf && !showOnlyPublicData" class="agent-data__fields--field" :entity="entity" prop="cpf" label="<?php i::_e("CPF")?>"></entity-data>
+            <entity-data v-if="entity.cnpj && !showOnlyPublicData" class="agent-data__fields--field" :entity="entity" prop="cnpj" label="<?php i::_e("MEI (CNPJ do MEI)")?>"></entity-data>
+            <entity-data v-if="entity.telefonePublico && !showOnlyPublicData" class="agent-data__fields--field" :entity="entity" prop="telefonePublico" label="<?php i::_e("Telefone público")?>"></entity-data>
+            <entity-data v-if="entity.telefone1 && !showOnlyPublicData" class="agent-data__fields--field" :entity="entity" prop="telefone1" label="<?php i::_e("Telefone privado 1")?>"></entity-data>
+            <entity-data v-if="entity.telefone2 && !showOnlyPublicData" class="agent-data__fields--field" :entity="entity" prop="telefone2" label="<?php i::_e("Telefone privado 2")?>"></entity-data>
+            <entity-data v-if="entity.emailPrivado && !showOnlyPublicData" class="agent-data__fields--field" :entity="entity" prop="emailPrivado" label="<?php i::_e("E-mail privado")?>"></entity-data>
+            <entity-data v-if="entity.emailPublico && !showOnlyPublicData" class="agent-data__fields--field" :entity="entity" prop="emailPublico" label="<?php i::_e("E-mail público")?>"></entity-data>
         </div>
     </template>
     <template v-if="verifySensitiveFields() && entity.currentUserPermissions.viewPrivateData && !showOnlyPublicData">
@@ -85,67 +41,21 @@ $this->import('
             </h4>
         </div>
         <div class="agent-data__fields">
-            <div v-if="entity.dataDeNascimento" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("Data de Nascimento") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.dataDeNascimento.date('long year')}}</label>
-                </div>
-            </div>
+            <entity-data v-if="entity.dataDeNascimento" class="agent-data__fields--field" :entity="entity" prop="dataDeNascimento" label="<?php i::_e("Data de nascimento")?>"></entity-data>
             <div v-if="entity.dataDeNascimento" class="agent-data__fields--field">
                 <label class="title"><?php i::_e("Pessoa idosa") ?></label>
                 <div class="box">
-                    <label class="box__content">{{entity.idoso ? 'Sim' : 'Não'}}</label>
+                   <label class="box__content">{{ entity.idoso == 1 ? getTextI18n('yes') : getTextI18n('no') }}</label>
                 </div>
             </div>
-            <div v-if="entity.genero" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("Gênero") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.genero}}</label>
-                </div>
-            </div>
-            <div v-if="entity.orientacaoSexual" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("Orientação Sexual") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.orientacaoSexual}}</label>
-                </div>
-            </div>
-            <div v-if="entity.agenteItinerante" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("Agente Itinerante") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.agenteItinerante}}</label>
-                </div>
-            </div>
-            <div v-if="entity.raca" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("Raça/Cor") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.raca}}</label>
-                </div>
-            </div>
-            <div v-if="entity.escolaridade" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("Escolaridade") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.escolaridade}}</label>
-                </div>
-            </div>
-            <div v-if="entity.pessoaDeficiente" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("Pessoa portadora de deficiência") ?></label>
-                <div class="box">
-                    <label v-if="entity.pessoaDeficiente" class="box__content">{{entity.pessoaDeficiente?.join(", ")}}</label>
-                    <label v-if="entity.pessoaDeficiente.length==1 && entity.pessoaDeficiente[0]==''" class="box__content"><?= i::__("Não sou") ?></label>
-                </div>
-            </div>
-            <div v-if="entity.comunidadesTradicional" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("Comunidades Tradicionais") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.comunidadesTradicional}}</label>
-                </div>
-            </div>
-            <div v-if="entity.comunidadesTradicionalOutros" class="agent-data__fields--field">
-                <label class="title"><?php i::_e("Outras Comunidades Tradicionais") ?></label>
-                <div class="box">
-                    <label class="box__content">{{entity.comunidadesTradicionalOutros}}</label>
-                </div>
-            </div>
+            <entity-data v-if="entity.genero" class="agent-data__fields--field" :entity="entity" prop="genero" label="<?php i::_e("Gênero")?>"></entity-data>
+            <entity-data v-if="entity.orientacaoSexual" class="agent-data__fields--field" :entity="entity" prop="orientacaoSexual" label="<?php i::_e("Orientação sexual")?>"></entity-data>
+            <entity-data v-if="entity.agenteItinerante" class="agent-data__fields--field" :entity="entity" prop="agenteItinerante" label="<?php i::_e("Agente itinerante")?>"></entity-data>
+            <entity-data v-if="entity.raca" class="agent-data__fields--field" :entity="entity" prop="raca" label="<?php i::_e("Raça/Cor") ?>"></entity-data>
+            <entity-data v-if="entity.escolaridade" class="agent-data__fields--field" :entity="entity" prop="escolaridade" label="<?php i::_e("Escolaridade") ?>"></entity-data>
+            <entity-data v-if="canShow(entity.pessoaDeficiente)" class="agent-data__fields--field" :entity="entity" prop="pessoaDeficiente" label="<?php i::_e("Pessoa portadora de deficiência") ?>"></entity-data>
+            <entity-data v-if="entity.comunidadesTradicional" class="agent-data__fields--field" :entity="entity" prop="comunidadesTradicional" label="<?php i::_e("Comunidades tradicionais") ?>"></entity-data>
+            <entity-data v-if="entity.comunidadesTradicionalOutros" class="agent-data__fields--field" :entity="entity" prop="comunidadesTradicionalOutros" label="<?php i::_e("Outras comunidades tradicionais") ?>"></entity-data>
         </div>
     </template>
 </div>

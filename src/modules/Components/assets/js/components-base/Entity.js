@@ -1,19 +1,47 @@
 class Entity {
     static __pkCache = new Map();
+    static __handledError = Symbol('handled entity error');
   
     constructor(objectType, id, scope = 'default') {
         this.__objectType = objectType;
         this.id = id;
         this.__scope = (scope || 'default');
         this.__validationErrors = {};
+        this.__validationMessages = [];
         
         this.__messagesEnabled = true;
         this.__processing = false;
 
         this.__originalValues = {};
 
+        this.__lockedFields = [];
+        this.__lockedFieldSeals = {};
+        this.__fieldSealStatuses = {};
+
         // as traduções estão no arquivo texts.php do componente <entity>
         this.text = Utils.getTexts('mc-entity');
+    }
+
+    static normalizeValidationMessages(errors) {
+        const messages = [];
+        const uniqueMessages = new Set();
+
+        const visit = (value) => {
+            if (typeof value === 'string') {
+                const message = value.trim();
+                if (message && !uniqueMessages.has(message)) {
+                    uniqueMessages.add(message);
+                    messages.push(message);
+                }
+            } else if (Array.isArray(value)) {
+                value.forEach(visit);
+            } else if (value && typeof value === 'object') {
+                Object.values(value).forEach(visit);
+            }
+        };
+
+        visit(errors);
+        return messages;
     }
 
     static fromJson(object, scope = 'default') {
@@ -29,9 +57,22 @@ class Entity {
             'terms', 'seals', , 'currentUserPermissions', 
             'relatedAgents', 'agentRelations',
             'relatedSpaces', 'spaceRelations',
+            'editableFields', 'allowedFields',
         ];
         
         this.populateId(obj);
+
+        if(obj.__lockedFields) {
+            this.__lockedFields = obj.__lockedFields;
+        }
+
+        if(obj.__lockedFieldSeals) {
+            this.__lockedFieldSeals = obj.__lockedFieldSeals;
+        }
+
+        if(obj.__fieldSealStatuses) {
+            this.__fieldSealStatuses = obj.__fieldSealStatuses;
+        }
 
         for (const prop of defaultProperties) {
             if (this[prop] && !obj[prop]) {
@@ -52,6 +93,10 @@ class Entity {
                 val = this[prop];
             }
 
+            if(definition.type === 'entity'){
+                continue;
+            }
+
             if(prop === 'status' && preserveValues && this[prop] <= 0 && obj[prop] > 0) {
                 this[prop] = obj[prop];
             }
@@ -59,8 +104,10 @@ class Entity {
             if ((definition.type == 'datetime' || definition.type == 'date' ) && val && !(val instanceof McDate)) {
                 if (typeof val == 'string') {
                     val = new McDate(val);
-                } else {
+                } else if (typeof val?.date == 'string' && val.date) {
                     val = new McDate(val.date);
+                } else {
+                    val = null;
                 }
             }
 
@@ -106,6 +153,22 @@ class Entity {
             }
         }
 
+        for (let prop in __properties) {
+            let definition = __properties[prop];
+            let val = obj[prop];
+
+            if(val === undefined && preserveValues) {
+                val = this[prop];
+            }
+
+            if (definition.type === 'entity' && val?.['@entityType'] && !(val instanceof Entity)) {
+                const entityApi = new API(val['@entityType'], this.__scope);
+                const entity = entityApi.getEntityInstance(val.id);
+                entity.populate(val);
+                this[prop] = entity;
+            }
+        }
+
         this.populateFiles(obj.files);
         this.populateMetalists(obj.metalists);
 
@@ -140,7 +203,9 @@ class Entity {
     }
 
     populateId(obj) {
-        this.id = obj[this.$PK];
+        if (obj[this.$PK] !== undefined && obj[this.$PK] !== null) {
+            this.id = obj[this.$PK];
+        }
     }
 
     populateFiles(files) {        
@@ -166,21 +231,52 @@ class Entity {
 
     cleanErrors() {
         this.__validationErrors = {};
+        this.__validationMessages = [];
     }
 
-    catchErrors(res, data) {
-        const message = data.data.message;
+    catchErrors(res, data, persistentErrors = false) {
+        let message = null;
+        let handled = false;
+        
+        if (typeof data.data === 'string') {
+            message = data.data;
+        } else if (data.data && typeof data.data === 'object' && data.data.message !== undefined) {
+            if (Array.isArray(data.data.message)) {
+                message = data.data.message[0] || data.data.message.join(', ');
+            } else {
+                message = data.data.message;
+            }
+        }
         
         if (res.status >= 500 && res.status <= 599) {
             this.sendMessage(message || this.text('erro inesperado'), 'error');
+            handled = true;
         } else if(res.status == 400) {
             if (data.error) {
-                this.__validationErrors = data.data;
-                this.sendMessage(message || this.text('erro de validacao'), 'error');
+                // data.data pode ser string (BadRequest genérico) ou mapa prop→erros.
+                // Sempre manter objeto para não quebrar entity-field.hasErrors.
+                this.__validationErrors = (data.data && typeof data.data === 'object' && !Array.isArray(data.data))
+                    ? data.data
+                    : {};
+                this.__validationMessages = Entity.normalizeValidationMessages(data.data);
+
+                if (this.__validationMessages.length) {
+                    this.sendMessage({
+                        title: this.text('nao foi possivel salvar'),
+                        messages: this.__validationMessages,
+                        persistent: persistentErrors,
+                    }, 'error');
+                } else {
+                    this.sendMessage(message || this.text('erro de validacao'), 'error');
+                }
+                handled = true;
             }
         } else if(res.status == 403) {
             this.sendMessage(message || this.text('permissao negada'), 'error');
+            handled = true;
         }
+
+        return handled;
     }
 
     data(onlyModifiedFields) {
@@ -213,7 +309,7 @@ class Entity {
             if (val && (typeof val == 'object')) {
                 if (prop == 'type') {
                     val = val.id;
-                } else {
+                } else if (definition.type != 'entity') {
                     result[prop] = JSON.parse(JSON.stringify(val));
                 }
             } else {
@@ -232,9 +328,12 @@ class Entity {
             if(prop == 'ownerEntity' && this[prop]) {
                 result[prop] = this[prop]?.id;
                 result['objectType'] = this[prop]?.__objectType;
-            } else if(prop == 'parent' && this[prop]) {
-                if (this[prop]?.id != this.id) {
+            } else if(prop == 'parent') {
+                if (this[prop] && this[prop]?.id != this.id) {
                     result[prop] = this[prop]?.id;
+                } else if (!this[prop]) {
+                    // Inclui parent como null quando for removido
+                    result[prop] = null;
                 }
             } else {
                 result[prop] = this[prop]?.id;
@@ -306,6 +405,49 @@ class Entity {
         return `${this.__scope}-${this.__objectType}-${this.id}`;
     }
 
+    get $lockedFields() {
+        return this.__lockedFields;
+    }
+
+    get $lockedFieldSeals() {
+        const result = {};
+        if(this.seals && this.seals.length > 0) {
+            const sealsById = {};
+
+            for (const seal of this.seals) {
+                sealsById[seal.sealId] = seal;
+            }
+
+            for (const field in this.__lockedFieldSeals) {
+                result[field] = this.__lockedFieldSeals[field].map((sealId) => {
+                    return sealsById[sealId];
+                });
+            }
+        }
+
+        return result;
+    }
+
+    get $fieldSealStatuses() {
+        const result = {};
+        if(this.seals && this.seals.length > 0) {
+            const sealsById = {};
+
+            for (const seal of this.seals) {
+                sealsById[seal.sealId] = seal;
+            }
+
+            for (const field in this.__fieldSealStatuses) {
+                result[field] = this.__fieldSealStatuses[field].map((fieldSeal) => {
+                    const seal = sealsById[fieldSeal.sealId];
+                    return seal ? {...seal, ...fieldSeal} : null;
+                }).filter((seal) => seal);
+            }
+        }
+
+        return result;
+    }
+
     get $RELATIONS() {
         const result = this.API.getEntityDescription('relations');
         if (this.__objectType == 'opportunity') {
@@ -374,7 +516,7 @@ class Entity {
         });
     }
 
-    async doPromise(res, cb) {
+    async doPromise(res, cb, {persistentErrors = false} = {}) {
         let data = await res.json();
         let result; 
 
@@ -382,15 +524,22 @@ class Entity {
             data = cb(data) || data;
             result = Promise.resolve(data);
         } else {
-            this.catchErrors(res, data);
-            data.status = res.status;
-            result = Promise.reject(data);
+            const handled = this.catchErrors(res, data, persistentErrors);
+            const error = data && typeof data === 'object' ? data : {error: true, data};
+            error.status = res.status;
+            if (handled) {
+                error[Entity.__handledError] = true;
+            }
+            result = Promise.reject(error);
         }
 
         this.__processing = false;
         return result;
     }
 
+    /**
+     * @deprecated Use `invoke`
+     */
     async POST(action, {callback, data, processingMessage}) {
         this.__processing = processingMessage || this.text('processando');
         const res = await this.API.POST(this.getUrl(action), data);
@@ -405,11 +554,54 @@ class Entity {
 
     async doCatch(error) {
         this.__processing = false;
+
+        if (error?.[Entity.__handledError]) {
+            return Promise.reject(error);
+        }
+
         this.sendMessage(this.text('erro inesperado'), 'error');
         return Promise.reject({error: true, status:0, data: this.text('erro inesperado'), exception: error});
     }
 
+    async invoke(action, data, processingMessage) {
+        this.__processing = processingMessage || this.text('processando');
+        
+        const res = await this.API.POST(this.getUrl(action), data);
+        
+        try {
+            return this.doPromise(res, (data) => data);
+        } catch (error) {
+            return this.doCatch(error);
+        }
+    }
+
+    async validate() {
+        await this.invoke('validateEntity');
+    }
+
     async save(delay = 300, preserveValues = true, forceSave) {
+        let updateMethod = 'PATCH';
+
+        if(typeof delay == 'object') {
+            if (delay.preserveValues !== undefined) {
+                preserveValues = delay.preserveValues;
+            }
+
+            if (delay.forceSave !== undefined) {
+                forceSave = delay.forceSave;
+            }
+
+            if (delay.updateMethod !== undefined) {
+                updateMethod = delay.updateMethod;
+            }
+
+            if (delay.delay !== undefined) {
+                delay = delay.delay;
+            } else {
+                delay = 300;
+            }
+        }
+
         if(!this.id) {
             preserveValues = false;
         }
@@ -437,7 +629,7 @@ class Entity {
                         return;
                     }
 
-                    const res = await this.API.persistEntity(this, forceSave);                    
+                    const res = await this.API.persistEntity(this, forceSave, updateMethod);                    
                     this.doPromise(res, (entity) => {
                         if (this.id) {
                             this.sendMessage(this.text('modificacoes salvas'));
@@ -520,6 +712,22 @@ class Entity {
         }
     }
 
+    async duplicate(removeFromLists) {
+        this.__processing = this.text('duplicando');
+
+        try {
+            const res = await this.API.duplicateEntity(this);
+            return this.doPromise(res, (entity) => {
+                this.sendMessage(this.text('entidade duplicada'));
+                this.populate(entity);
+
+                window.open('/minhas-oportunidades/#draft', '_blank').focus();
+            });
+        } catch (error) {
+            return this.doCatch(error);
+        }
+    }
+
     async publish(removeFromLists) {
         this.__processing = this.text('publicando');
         try {
@@ -548,7 +756,6 @@ class Entity {
             return this.doPromise(res, (entity) => {
                 this.sendMessage(this.text('entidade duplicada'));
                 this.populate(entity);
-                
                 window.open('/minhas-oportunidades/#draft', '_blank').focus();
             });
         } catch (error) {
@@ -611,7 +818,7 @@ class Entity {
                     this.files[group] = file;
                 }
                 return file;
-            });
+            }, {persistentErrors: false});
         } catch (error) {
             return this.doCatch(error);
         }
@@ -689,11 +896,15 @@ class Entity {
             this.doPromise(res, (data) => {
                 let index;
                 
-                index = this.agentRelations[group].indexOf(agent);
-                this.agentRelations[group].splice(index,1);
+                index = this.agentRelations[group]?.findIndex(relation => relation.agent?.id === agent.id);
+                if (index != undefined && index != -1) {
+                    this.agentRelations[group].splice(index, 1);
+                }
                 
-                index = this.relatedAgents[group].indexOf(agent);
-                this.relatedAgents[group].splice(index,1);
+                index = this.relatedAgents[group]?.findIndex(a => a.id === agent.id);
+                if (index != undefined && index != -1) {
+                    this.relatedAgents[group].splice(index, 1);
+                }
             
             });
         } catch (error) {

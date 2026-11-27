@@ -24,13 +24,13 @@ $this->import('
                 <label>
                     <?= i::__('Resultado: ') ?>
                 </label>
-                <strong v-if="registration.consolidatedResult === 'Habilitado'" class="success__color">
+                <strong v-if="registration.consolidatedResult === 'valid'" class="success__color">
                     <mc-icon name="circle" class="success__color"></mc-icon>{{registration.score}}
-                    {{registration.consolidatedResult}}
+                    {{formatConsolidatedResult(registration.consolidatedResult)}}
                 </strong>
-                <strong v-if="registration.consolidatedResult === 'Inabilitado'" class="danger__color">
-                    <mc-icon name="circle" class="danger__color"></mc-icon>{{registration.consolidatedResult}}
-                    {{registration.consolidatedResult}}
+                <strong v-if="registration.consolidatedResult === 'invalid'" class="danger__color">
+                    <mc-icon name="circle" class="danger__color"></mc-icon>
+                    {{formatConsolidatedResult(registration.consolidatedResult)}}
                 </strong>
             </p>
         </div>
@@ -40,8 +40,17 @@ $this->import('
 <div v-if="evaluationDetails" v-for="(evaluation, index) in evaluationDetails" class="registration-results__card">
     <div class="registration-results__card-header">
         <div class="registration-results__card-title">
-            <h4 v-if="evaluation.valuer" class="registration-results__opinion-title bold">
-                <?= i::__('Parecerista: ') ?> {{evaluation.valuer.name}}
+            <h4 v-if="evaluation.valuer && evaluation.committeeSequentialNumber" class="registration-results__opinion-title bold">
+                <?= i::__('Parecerista: ') ?> #{{evaluation.committeeSequentialNumber}} - ({{evaluation.valuer.id}} - {{evaluation.valuer.name}})
+            </h4>
+            <h4 v-else-if="evaluation.valuer" class="registration-results__opinion-title bold">
+                <?= i::__('Parecerista: ') ?> #{{index+1}} - ({{evaluation.valuer.id}} - {{evaluation.valuer.name}})
+            </h4>
+            <h4 v-else-if="evaluation.committeeSequentialNumber" class="registration-results__opinion-title bold">
+                <?= i::__('Parecerista: ') ?> #{{evaluation.committeeSequentialNumber}}
+            </h4>
+            <h4 v-else class="registration-results__opinion-title bold">
+                <?= i::__('Parecerista: ') ?> #{{index+1}}
             </h4>
 
             <p>

@@ -5,13 +5,15 @@
  */
 
 use MapasCulturais\i;
-
-$entity = $this->controller->requestedEntity;
+use MapasCulturais\Entities\Registration;
+use SealExemption\SealExemptionService;
 
 $committee = [];
 $valuersMetadata = [];
 
-if ($comm = $entity->getEvaluationCommittee()) {
+$opportunity = $this->getOpportunityFromEntity($entity);
+
+if ($comm = $opportunity->getEvaluationCommittee()) {
     foreach($comm as $member) {
         $user_id = $member->agent->owner->user->id;
         if (empty($committee[$user_id])) {
@@ -32,8 +34,178 @@ array_unshift($committee, [
     "label" => i::__('Todos')
 ]);
 
+$skipFields = ["previousPhaseRegistrationId", "nextPhaseRegistrationId", "id"];
+$default_headers = [];
+
+// Carrega metadados
+$definitions = Registration::getPropertiesMetadata();
+$can_see = function ($def) use ($app) {
+    return $app->user->is('admin') ? true : !(isset($def['private']) && $def['private']);
+};
+
+foreach ($definitions as $field => $def) {
+    if (!in_array($field, $skipFields) && !str_starts_with($field, "_") && $can_see($def) && $def['label']) {
+        $header = [
+            'text' => str_starts_with($field, 'geo') ? $def['label'] . " - Divisão geográfica" : $def['label'],
+            'value' => $field,
+            'slug' => $field
+        ];
+        $default_headers[] = $header;
+    }
+}
+
+$form_position = [];
+$position = 0;
+$phase = $opportunity;
+do {
+    $phase_fields = $phase->registrationFieldConfigurations;
+    usort($phase_fields, fn($a, $b) => $a->displayOrder <=> $b->displayOrder);
+
+    foreach ($phase_fields as $phase_field) {
+        $form_position[$phase_field->fieldName] ??= $position++;
+    }
+} while ($phase = $phase->previousPhase);
+
+$form_fields = array_values(array_filter($default_headers, fn($h) => isset($form_position[$h['slug']])));
+$properties = array_values(array_filter($default_headers, fn($h) => !isset($form_position[$h['slug']])));
+
+usort($form_fields, fn($a, $b) => $form_position[$a['slug']] <=> $form_position[$b['slug']]);
+
+$default_headers = array_merge($properties, $form_fields);
+
+$default_headers[] = [
+    'text' => i::__('Comissão de avaliação'),
+    'value' => 'committee',
+    'slug' => 'committee',
+    'exportField' => null,
+    'required' => true,
+    'visible' => true
+];
+
+// Função para separar campos no select
+function splitSelectFields($str) {
+    $len = strlen($str);
+    $fields = [];
+    $current = '';
+    $depth = 0;
+    for ($i = 0; $i < $len; $i++) {
+        $char = $str[$i];
+        if ($char === ',' && $depth === 0) {
+            $fields[] = trim($current);
+            $current = '';
+        } else {
+            if ($char === '{') $depth++;
+            elseif ($char === '}') $depth--;
+            $current .= $char;
+        }
+    }
+    if ($current !== '') $fields[] = trim($current);
+    return $fields;
+}
+
+// Processa campo para parent/children
+function parseField($field) {
+    $parent = $field;
+    $children = [];
+    if (strpos($field, '.{') !== false) {
+        [$parentPart, $childrenPart] = explode('.{', $field, 2);
+        $childrenPart = rtrim($childrenPart, '}');
+        $parent = rtrim($parentPart, '?');
+        $children = array_map('trim', explode(',', $childrenPart));
+    } elseif (strpos($field, '.') !== false) {
+        [$parentPart, $child] = explode('.', $field, 2);
+        $parent = rtrim($parentPart, '?');
+        $children = [trim($child)];
+    } else {
+        $parent = rtrim($field, '?');
+    }
+    return ['parent' => $parent, 'children' => $children];
+}
+
+// Processa o default_select original
+$default_select = 'agentsData';
+$original_fields = splitSelectFields($default_select);
+$merged = [];
+$parentOrder = [];
+foreach ($original_fields as $field) {
+    $parsed = parseField($field);
+    $parent = $parsed['parent'];
+    $children = $parsed['children'];
+    if (!isset($merged[$parent])) {
+        $merged[$parent] = [];
+        $parentOrder[] = $parent;
+    }
+    $merged[$parent] = array_unique(array_merge($merged[$parent], $children));
+}
+
+// Processa headers para adicionar ao select
+foreach ($default_headers as $header) {
+    $field = $header['slug'] ?? $header['value'];
+    $parsed = parseField($field);
+    $parent = $parsed['parent'];
+    $children = $parsed['children'];
+    if (!isset($merged[$parent])) {
+        $merged[$parent] = [];
+        $parentOrder[] = $parent;
+    }
+    $merged[$parent] = array_unique(array_merge($merged[$parent], $children));
+}
+
+// Reconstrói o select final
+$final_select = [];
+foreach ($parentOrder as $parent) {
+    $children = $merged[$parent];
+    if ($children) {
+        $final_select[] = $parent . '.{' . implode(',', $children) . '}';
+    } else {
+        $final_select[] = $parent;
+    }
+}
+$default_select = implode(',', $final_select);
+
+$seal_exemption_config = $opportunity->evaluationMethodConfiguration?->sealExemptionConfig;
+$has_seal_exemption_config = SealExemptionService::hasActiveConfig($seal_exemption_config);
+
+if ($has_seal_exemption_config) {
+    // Campos de isenção por selos além do status (header). O timestamp alimenta o
+    // tooltip ("Isento em ...").
+    $default_select .= ',sealExemptionStatus,sealExemptionTimestamp';
+}
+
+
+$headers = [
+    [ 'text' => i::__('inscrição', 'opportunity-evaluations-table'), 'value' => 'number', 'slug' => 'number', 'exportField' => 'number', 'sticky' => true, 'width' => '160px' ],
+    [ 'text' => i::__('Nº avaliador', 'opportunity-evaluations-table'), 'value' => 'valuer?.committeeSequentialNumber', 'slug' => 'committeeSequentialNumber', 'exportField' => 'committeeSequentialNumber', 'visible' => true, 'width' => '100px' ],
+    [ 'text' => i::__('ID usuário avaliador', 'opportunity-evaluations-table'), 'value' => 'valuer?.user', 'slug' => 'valuerUserId', 'exportField' => 'valuerUserId', 'visible' => true, 'width' => '120px' ],
+    [ 'text' => i::__('ID agente avaliador', 'opportunity-evaluations-table'), 'value' => 'valuer?.id', 'slug' => 'valuerAgentId', 'exportField' => 'valuerAgentId', 'visible' => true, 'width' => '120px' ],
+    [ 'text' => i::__('avaliador', 'opportunity-evaluations-table'), 'value' =>  'valuer?.name', 'slug' => 'evaluator', 'exportField' => 'user', 'visible' => true],
+    [ 'text' => i::__('Resultado do avaliador', 'opportunity-evaluations-table'), 'value' => 'evaluation?.resultString', 'slug' => 'result', 'exportField' => 'result'],
+    [ 'text' => i::__('Tipo de proponente', 'opportunity-evaluations-table'), 'value' => 'proponentType', 'slug' => 'proponentType'],
+    [ 'text' => i::__('Categoria', 'opportunity-evaluations-table'), 'value' => 'category', 'slug' => 'category'],
+    [ 'text' => i::__('Faixa', 'opportunity-evaluations-table'), 'value' => 'range', 'slug' => 'range'],
+    [ 'text' => i::__('Ações', 'opportunity-evaluations-table'), 'value' => '', 'slug' => 'delete', 'exportField' => null, 'visible' => true, 'width' => '100px'],
+];
+
+if ($has_seal_exemption_config) {
+    array_splice($headers, 6, 0, [[
+        'text' => i::__('Dispensada por selos'),
+        'value' => 'sealExemptionStatus',
+        'slug' => 'sealExemption',
+        'visible' => true,
+        'width' => '180px'
+    ]]);
+}
+
+$default_headers = array_merge($default_headers, $headers);
+
+$app->applyHook('component(opportunity-evaluations-table).additionalHeaders', [&$default_headers, &$default_select]);
+
 $this->jsObject['config']['opportunityEvaluationsTable'] = [
     "isAdmin" => $app->user->is("admin"),
     "committee" => $committee,
-    "valuersMetadata" => $valuersMetadata
+    "valuersMetadata" => $valuersMetadata,
+    'defaultHeaders' => $default_headers,
+    'defaultSelect' => $default_select,
+    'headers' => $headers,
+    'hasSealExemptionConfig' => $has_seal_exemption_config,
 ];

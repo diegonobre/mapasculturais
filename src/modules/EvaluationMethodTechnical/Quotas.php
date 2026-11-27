@@ -3,8 +3,10 @@ namespace EvaluationMethodTechnical;
 
 use Doctrine\ORM\Exception\NotSupported;
 use MapasCulturais\API;
+use MapasCulturais\ApiQuery;
 use MapasCulturais\App;
 use MapasCulturais\Entities\EvaluationMethodConfiguration;
+use MapasCulturais\Entities\Registration;
 use MapasCulturais\Entities\Opportunity;
 use MapasCulturais\Entities\RegistrationEvaluation;
 use MapasCulturais\i;
@@ -109,7 +111,7 @@ class Quotas {
         $this->cutoffScore = $this->evaluationConfig->cutoffScore ?: 0;
 
         $this->considerQuotasInGeneralList = $this->firstPhase->considerQuotasInGeneralList;
-
+        
         // proecessa a configuração de cotas
         $this->quotaRules = $this->evaluationConfig->quotaConfiguration ? ($this->evaluationConfig->quotaConfiguration->rules ?: []) : [];
         $this->tiebreakerConfig = array_values((array) $this->evaluationConfig->tiebreakerCriteriaConfiguration ?: []);
@@ -131,6 +133,17 @@ class Quotas {
         // proecessa a configuração de faixas
         $registration_ranges = $this->firstPhase->registrationRanges ?: [];
         $this->isRangeActive = (bool) $registration_ranges;
+
+        // se não há faixas configuradas, inicializa a faixa default
+        if(!$this->isRangeActive) {
+            $registration_ranges = [
+                'default' => [
+                    'label' => 'default',
+                    'limit' => $this->vacancies
+                ]
+            ];
+        }
+
         foreach($registration_ranges as $range) {
             $range_name = $range['label'];
             $range_vacancies = $range['limit'];
@@ -179,11 +192,7 @@ class Quotas {
      * @return Quotas 
      */
     public static function instance(int $phase_id): Quotas {
-        if(!isset(self::$instances[$phase_id])) {
-            self::$instances[$phase_id] = new Quotas($phase_id);
-        }
-
-        return self::$instances[$phase_id];
+        return new Quotas($phase_id);
     }
 
     /**
@@ -251,6 +260,43 @@ class Quotas {
         return $fields;
     }
 
+    protected function enrichRegistrationFromFirstPhase(object $registration): object {
+        if (!isset($registration->id) || $this->phase->id === $this->firstPhase->id) {
+            return $registration;
+        }
+
+        // Já enriquecido em batch (loadRegistrationsForQuotaSorting + enrichRegistrationsFromFirstPhase)
+        if (!empty($registration->_firstPhaseEnriched)) {
+            return $registration;
+        }
+
+        $registration_entity = App::i()->repo('Registration')->find($registration->id);
+        if (!$registration_entity) {
+            return $registration;
+        }
+
+        $source_registration = $registration_entity->firstPhase;
+        if (!$source_registration || $source_registration->id === $registration_entity->id) {
+            return $registration;
+        }
+
+        foreach ($this->fields as $field_name) {
+            if ($this->isQuotaFieldValueEmpty($registration->$field_name ?? null) && isset($source_registration->$field_name)) {
+                $registration->$field_name = $source_registration->$field_name;
+            }
+        }
+
+        if ($this->isQuotaFieldValueEmpty($registration->appliedForQuota ?? null)) {
+            $registration->appliedForQuota = $source_registration->appliedForQuota;
+        }
+
+        $registration->_firstPhaseEnriched = true;
+
+        App::i()->em->detach($registration_entity);
+
+        return $registration;
+    }
+
     /**
      * Retorna lista de inscrições para a ordenação das inscrições considerando as cotas, 
      * contendo todos os campos que serão utilizados.
@@ -260,36 +306,97 @@ class Quotas {
      * @throws InvalidArgumentException 
      */
     function getRegistrationsForQuotaSorting(): array {
-        $app = App::i();
-                
-        $use_cache = $app->config['app.useQuotasCache'];
-        
-        $cache_key = false;//"{$this->phase}:quota-registrations:" . md5(serialize($params));
-        
-        if($use_cache && $app->cache->contains($cache_key)){
-            return $app->cache->fetch($cache_key);
-        }
+        $registrations = $this->loadRegistrationsForQuotaSorting();
 
-        $result = $app->controller('opportunity')->apiFindRegistrations($this->phase, [
-            '@select' => implode(',', ['number,range,proponentType,agentsData,consolidatedResult,eligible,score,sentTimestamp', ...$this->fields]),
-            '@order' => 'score DESC, id DESC',
-            'status' => API::GTE(0)
-        ]);
-
-        $registrations = array_map(function ($reg) {
-            return (object) $reg; 
-        }, $result->registrations);
-
-        if($use_cache){
-            $app->cache->save($cache_key, $registrations, $app->config['app.quotasCache.lifetime']);
-        }
+        $this->enrichRegistrationsFromFirstPhase($registrations);
 
         foreach($registrations as $registration) {
+            $this->applyAgentOwnerFieldsFromAgentsData($registration);
             $this->getRegistrationQuotas($registration);
             $this->getRegistrationRegion($registration);
         }
 
         return $registrations;
+    }
+
+    /**
+     * Enriquece as inscrições com campos da primeira fase que podem ser privados
+     * e não são retornados pela ApiQuery normalmente.
+     * 
+     * @param array $registrations
+     * @return void
+     */
+    protected function enrichRegistrationsFromFirstPhase(array $registrations): void {
+        if ($this->phase->id === $this->firstPhase->id) {
+            return;
+        }
+
+        $app = App::i();
+        $registration_ids = array_map(fn($reg) => $reg->id, $registrations);
+        
+        if (empty($registration_ids)) {
+            return;
+        }
+
+        // Buscar previousPhaseRegistrationId para mapear inscrições
+        $conn = $app->em->getConnection();
+        $placeholders = implode(',', array_fill(0, count($registration_ids), '?'));
+        
+        $sql = "SELECT object_id, value 
+                FROM registration_meta 
+                WHERE object_id IN ($placeholders) 
+                AND key = 'previousPhaseRegistrationId'";
+        
+        $stmt = $conn->executeQuery($sql, $registration_ids);
+        $previous_phase_map = [];
+        while ($row = $stmt->fetchAssociative()) {
+            $previous_phase_map[(int) $row['object_id']] = (int) $this->decodeMetaValue($row['value']);
+        }
+
+        if (empty($previous_phase_map)) {
+            return;
+        }
+
+        // Buscar campos de quota da primeira fase
+        $first_phase_ids = array_values(array_unique($previous_phase_map));
+        $placeholders = implode(',', array_fill(0, count($first_phase_ids), '?'));
+        
+        $quota_fields = array_diff($this->fields, ['appliedForQuota']);
+        if (empty($quota_fields)) {
+            return;
+        }
+
+        $field_placeholders = implode(',', array_fill(0, count($quota_fields), '?'));
+        
+        $sql = "SELECT object_id, key, value 
+                FROM registration_meta 
+                WHERE object_id IN ($placeholders) 
+                AND key IN ($field_placeholders)";
+        
+        $params = array_merge($first_phase_ids, $quota_fields);
+        $stmt = $conn->executeQuery($sql, $params);
+        
+        $first_phase_data = [];
+        while ($row = $stmt->fetchAssociative()) {
+            $object_id = (int) $row['object_id'];
+            if (!isset($first_phase_data[$object_id])) {
+                $first_phase_data[$object_id] = [];
+            }
+            $first_phase_data[$object_id][$row['key']] = $this->decodeMetaValue($row['value']);
+        }
+
+        // Aplicar dados da primeira fase às inscrições atuais
+        foreach ($registrations as $registration) {
+            $first_phase_id = $previous_phase_map[$registration->id] ?? null;
+            if ($first_phase_id && isset($first_phase_data[$first_phase_id])) {
+                foreach ($first_phase_data[$first_phase_id] as $field => $value) {
+                    if ($this->isQuotaFieldValueEmpty($registration->$field ?? null)) {
+                        $registration->$field = $value;
+                    }
+                }
+            }
+            $registration->_firstPhaseEnriched = true;
+        }
     }
 
 
@@ -301,6 +408,7 @@ class Quotas {
      */
     function getRegistrationRegion($registration): string {
         $app = App::i();
+        $registration = $this->enrichRegistrationFromFirstPhase($registration);
 
         $registration_proponent_type = $registration->proponentType ?: 'default';
 
@@ -344,8 +452,6 @@ class Quotas {
     }
 
     public function getRegistrationsOrderByScoreConsideringQuotas(): array {
-        $app = App::i();
-
         // obtendo as inscrições ordenadas pela pontuação considerando critérios de desempate
         $registrations = $this->getRegistrationsForQuotaSorting();
         $registrations = $this->tiebreaker($registrations);
@@ -374,6 +480,17 @@ class Quotas {
             }
             
             $range = $registration->range ?: 'default';
+            
+            if (!isset($range_registrations[$range])) {
+                $range_registrations[$range] = [];
+            }
+            if (!isset($range_result[$range])) {
+                $range_result[$range] = [];
+            }
+            if (!isset($range_max_registrations[$range])) {
+                $range_max_registrations[$range] = 0;
+            }
+            
             $range_registrations[$range][] = $registration;
             if(count($range_result[$range]) < $range_max_registrations[$range]) {
                 $range_result[$range][] = $registration;
@@ -427,8 +544,8 @@ class Quotas {
 
 
                             if(!$this->isRegistrationInArray($registration, $range_result[$range]) && in_array($registration_region, $regions_with_vacancies)) {
-                                $geo_count_results[$registration_region]++;
-                                $geo_count_results[$region]--;
+                                $geo_count_results[$registration_region] = ($geo_count_results[$registration_region] ?? 0) + 1;
+                                $geo_count_results[$region] = ($geo_count_results[$region] ?? 0) - 1;
                                 $range_result[$range][$key_of_registration_to_exclude] = $registration;
                             }
                         }
@@ -484,11 +601,11 @@ class Quotas {
                     // calcula o número de vagas ainda disponíveis para o tipo de cota
                     for($i = count($_result) -1; $i >= $first_quota_index; $i--) {
                         // se não tem mais vagas para este tipo de cota
-                        if($avaliable_quota_vacancies <= 0) {
+                        if(!isset($_result[$i]) || $avaliable_quota_vacancies <= 0) {
                             break;
                         }
                         $registration = $_result[$i];
-                        
+
                         if($this->isRegistrationEligibleForQuota($registration, $quota_slug)) {
                             $avaliable_quota_vacancies--;
                             $this->setRegistrationAsQuota($registration, $quota_slug);
@@ -577,6 +694,7 @@ class Quotas {
 
     public function setRegistrationAsQuota(object $registration, string $quota_slug, object $replaced_registration = null) {
         $registration->usingQuota = true;
+
         if ($replaced_registration) {
             $this->registrationFields[$registration->id]['usingQuota'] = $quota_slug . "\n" . sprintf(i::__("(substituindo %s)"), $replaced_registration->number);
         } else {
@@ -606,15 +724,22 @@ class Quotas {
      * @param object $registration 
      * @return array
      */
-    protected function getRegistrationQuotas(object $registration): array {
+    public function getRegistrationQuotas(object $registration): array {
+        $registration = $this->enrichRegistrationFromFirstPhase($registration);
+
         $result = [];
         $quotas = [];
-        if($registration->eligible) {
+        if (isset($registration->eligible) && $registration->eligible) {
             $proponent_type = $registration->proponentType ?? 'default';
 
             foreach($this->quotaRules as $rule) {
                 $field_name = $rule->fields->$proponent_type->fieldName ??  null;
-                if($field_name && in_array($registration->$field_name, $rule->fields->$proponent_type->eligibleValues)) {
+                if(!$field_name) {
+                    continue;
+                }
+
+                $field_value = $this->normalizeQuotaFieldValue($registration->$field_name ?? null);
+                if(array_intersect($field_value, $rule->fields->$proponent_type->eligibleValues)) {
                     $result[] = $this->getQuotaTypeSlugByRule($rule);
                     $quotas[] = $rule->title;
                 }
@@ -623,18 +748,28 @@ class Quotas {
         
         $this->registrationFields[$registration->id] = $this->registrationFields[$registration->id] ?? [];
         $this->registrationFields[$registration->id]['quotas'] = $quotas;
-        $this->registrationFields[$registration->id]['appliedForQuota'] = $registration->appliedForQuota;
+        $this->registrationFields[$registration->id]['appliedForQuota'] = $registration->appliedForQuota ?? null;
         return $result;
     }
 
     private function getCriterionName(string $criterion_id): string {
+        $app = App::i();
+        $cache_key = __METHOD__.$criterion_id;
+
+        if($app->rcache->contains($cache_key)) {
+            return $app->rcache->fetch($cache_key);
+        }
+
+        $result = '';
         foreach($this->evaluationConfig->criteria as $criterion) {
             if($criterion->id == $criterion_id) {
-                return $criterion->title;
+                $result = $criterion->title;
+                break;
             }
         }
 
-        return '';
+        $app->rcache->save($cache_key, $result);
+        return $result;
     }
 
     /**
@@ -652,6 +787,40 @@ class Quotas {
         return '';
     }
 
+    protected function getTiebreakerSelected(object $tiebreaker): ?object {
+        if (isset($tiebreaker->selected)) {
+            return $tiebreaker->selected;
+        }
+
+        $criterion_type = $tiebreaker->criterionType ?? null;
+        if (!$criterion_type || !str_starts_with($criterion_type, 'field_')) {
+            return null;
+        }
+
+        foreach ($this->firstPhase->registrationFieldConfigurations as $field) {
+            if ($field->fieldName === $criterion_type) {
+                $field_type = $field->fieldType;
+
+                // agent-owner/collective fields store the entity field type (select, date, …)
+                // in Agent metadata; without resolving it, tiebreaker comparisons are skipped.
+                if (in_array($field_type, ['agent-owner-field', 'agent-collective-field'], true)) {
+                    $entity_field = $field->config['entityField'] ?? null;
+                    $agent_meta = \MapasCulturais\Entities\Agent::getPropertiesMetadata();
+                    if ($entity_field && isset($agent_meta[$entity_field]['type'])) {
+                        $field_type = $agent_meta[$entity_field]['type'];
+                    }
+                }
+
+                return (object) [
+                    'title' => $field->title,
+                    'fieldType' => $field_type,
+                ];
+            }
+        }
+
+        return null;
+    }
+
     private function saveRegistrationTiebreaker($registration, $tiebreaker, $value = null) {
         $this->registrationFields[$registration->id] = $this->registrationFields[$registration->id] ?? [];
         $this->registrationFields[$registration->id]['tiebreaker'] = $this->registrationFields[$registration->id]['tiebreaker'] ?? [];
@@ -666,7 +835,8 @@ class Quotas {
             $value = $registration->sentTimestamp;
     
         } else {
-            $key = $tiebreaker->selected->title;
+            $selected = $this->getTiebreakerSelected($tiebreaker);
+            $key = $selected->title ?: $tiebreaker->criterionType;
             
             if (property_exists($registration, $tiebreaker->criterionType)) {
                 $value = $registration->{$tiebreaker->criterionType};
@@ -738,6 +908,8 @@ class Quotas {
                             }
                         }
                     }
+
+                    continue;
                 }
                 
                 if(isset($tiebreaker->criterionType) && $tiebreaker->criterionType == 'criterion') {
@@ -750,6 +922,8 @@ class Quotas {
                     if($registration1Has != $registration2Has) {
                         return $registration2Has <=> $registration1Has;
                     }
+
+                    continue;
                 }
                 
                 if(isset($tiebreaker->criterionType) && $tiebreaker->criterionType == 'sectionCriteria') {
@@ -762,9 +936,11 @@ class Quotas {
                     if($registration1Has != $registration2Has) {
                         return $registration2Has <=> $registration1Has;
                     }
+
+                    continue;
                 }
 
-                $selected = $tiebreaker->selected;
+                $selected = $this->getTiebreakerSelected($tiebreaker);
                 if(is_null($selected)) {
                     continue;
                 }
@@ -811,8 +987,12 @@ class Quotas {
                 
 
                 if(in_array($selected->fieldType, ['multiselect', 'checkboxes'])) {
-                    $registration1Has = array_intersect($registration1->{$tiebreaker->criterionType}, $tiebreaker->preferences);
-                    $registration2Has = array_intersect($registration2->{$tiebreaker->criterionType}, $tiebreaker->preferences);
+                    $registration1Values = $this->normalizeQuotaFieldValue($registration1->{$tiebreaker->criterionType} ?? null);
+                    $registration2Values = $this->normalizeQuotaFieldValue($registration2->{$tiebreaker->criterionType} ?? null);
+                    $preferences = $this->normalizeQuotaFieldValue($tiebreaker->preferences ?? null);
+
+                    $registration1Has = array_intersect($registration1Values, $preferences);
+                    $registration2Has = array_intersect($registration2Values, $preferences);
 
                     $registration1Has = !empty($registration1Has);
                     $registration2Has = !empty($registration2Has);
@@ -926,6 +1106,12 @@ class Quotas {
      * @return float 
      */
     public function tiebreakerCriterion($criteria_id, $registration_id, $evaluation_data) {
+        $app = APP::i();
+        $cache_key = __METHOD__.":{$criteria_id}:$registration_id";
+        if($app->rcache->contains($cache_key)) {
+            return $app->rcache->fetch($cache_key);
+        }
+
         $criteria = [];
         foreach($this->evaluationConfig->criteria as $criterion) {
             if($criterion->id === $criteria_id) {
@@ -943,8 +1129,10 @@ class Quotas {
                 }
             }
         }
-        
-        return number_format($result, 2);
+
+        $_result = number_format($result, 2);
+        $app->rcache->save($cache_key, $_result);
+        return $_result;
     }
 
     /** 
@@ -974,5 +1162,234 @@ class Quotas {
         }
 
         return number_format($result, 2);
+    }
+
+    public static function selectRequiresQuotaFields(string $select): bool {
+        return (bool) preg_match('/\b(usingQuota|quotas|tiebreaker)\b/', $select);
+    }
+
+    /**
+     * Carrega inscrições da fase atual para cálculo de cotas (sem apiFindRegistrations multi-fase).
+     *
+     * @return array<object>
+     */
+    protected function loadRegistrationsForQuotaSorting(): array {
+        $conn = App::i()->em->getConnection();
+
+        $rows = $conn->fetchAllAssociative(
+            'SELECT r.id, r.number, r.score, r.range, r.proponent_type AS "proponentType",
+                    r.consolidated_result AS "consolidatedResult", r.status, r.eligible,
+                    r.sent_timestamp AS "sentTimestamp", r.agents_data AS "agentsData"
+             FROM registration r
+             WHERE r.opportunity_id = :phase_id AND r.status >= 0
+             ORDER BY r.score DESC, r.id DESC',
+            ['phase_id' => $this->phase->id]
+        );
+
+        if (!$rows) {
+            return [];
+        }
+
+        $meta_keys = array_unique(array_merge($this->fields, ['appliedForQuota']));
+        $meta_by_id = $this->fetchRegistrationMetaBatch(array_column($rows, 'id'), $meta_keys);
+
+        $registrations = [];
+        foreach ($rows as $row) {
+            $registration = (object) [
+                'id' => (int) $row['id'],
+                'number' => $row['number'],
+                'score' => $row['score'],
+                'range' => $row['range'],
+                'proponentType' => $row['proponentType'],
+                'consolidatedResult' => $row['consolidatedResult'],
+                'status' => $row['status'],
+                'eligible' => $row['eligible'],
+                'sentTimestamp' => $row['sentTimestamp'],
+                'agentsData' => $this->decodeJsonValue($row['agentsData'] ?? null) ?? [],
+            ];
+
+            foreach ($meta_by_id[$registration->id] ?? [] as $key => $value) {
+                $registration->$key = $value;
+            }
+
+            $this->applyAgentOwnerFieldsFromAgentsData($registration);
+
+            $registrations[] = $registration;
+        }
+
+        return $registrations;
+    }
+
+    /**
+     * Preenche campos de agente (ex.: pessoaDeficiente, raca) a partir de agentsData quando não estão no meta.
+     */
+    protected function applyAgentOwnerFieldsFromAgentsData(object $registration): void {
+        $agents_data = $registration->agentsData ?? [];
+        if (!$agents_data) {
+            return;
+        }
+
+        $app = App::i();
+        $proponent_types_map = $app->config['registration.proponentTypesToAgentsMap'] ?? [];
+        $proponent_type = $registration->proponentType ?? 'default';
+        $agent_key = $proponent_types_map[$proponent_type] ?? 'owner';
+        $agent_data = $agents_data[$agent_key] ?? $agents_data['owner'] ?? null;
+
+        if (!$agent_data) {
+            return;
+        }
+
+        foreach ($this->firstPhase->registrationFieldConfigurations as $field) {
+            $field_name = $field->fieldName;
+            if (!in_array($field_name, $this->fields, true)) {
+                continue;
+            }
+            if (!in_array($field->fieldType, ['agent-owner-field', 'agent-collective-field'], true)) {
+                continue;
+            }
+
+            $entity_field = $field->config['entityField'] ?? null;
+            if (!$entity_field || !isset($agent_data[$entity_field])) {
+                continue;
+            }
+
+            if ($this->isQuotaFieldValueEmpty($registration->$field_name ?? null)) {
+                $registration->$field_name = $agent_data[$entity_field];
+            }
+        }
+    }
+
+    protected function isQuotaFieldValueEmpty(mixed $value): bool {
+        if ($value === null || $value === '') {
+            return true;
+        }
+
+        return is_array($value) && count($value) === 0;
+    }
+
+    protected function normalizeQuotaFieldValue(mixed $value): array {
+        if ($value === null || $value === '') {
+            return [];
+        }
+
+        if (is_array($value)) {
+            return $value;
+        }
+
+        if (is_string($value)) {
+            $decoded = json_decode($value, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                return $decoded;
+            }
+
+            // Legacy PHP-serialized arrays only — never instantiate objects (CWE-502).
+            $unserialized = @unserialize($value, ['allowed_classes' => false]);
+            if (is_array($unserialized)) {
+                return $unserialized;
+            }
+
+            return [$value];
+        }
+
+        return [(string) $value];
+    }
+
+    /**
+     * @param int[] $registration_ids
+     * @param string[] $keys
+     * @return array<int, array<string, mixed>>
+     */
+    protected function fetchRegistrationMetaBatch(array $registration_ids, array $keys): array {
+        $registration_ids = array_values(array_filter(array_map('intval', $registration_ids)));
+        $keys = array_values(array_filter($keys));
+
+        if (!$registration_ids || !$keys) {
+            return [];
+        }
+
+        $conn = App::i()->em->getConnection();
+        $id_placeholders = implode(',', array_fill(0, count($registration_ids), '?'));
+        $key_placeholders = implode(',', array_fill(0, count($keys), '?'));
+
+        $sql = "SELECT object_id, key, value
+                FROM registration_meta
+                WHERE object_id IN ($id_placeholders) AND key IN ($key_placeholders)";
+
+        $stmt = $conn->executeQuery($sql, array_merge($registration_ids, $keys));
+
+        $result = [];
+        while ($row = $stmt->fetchAssociative()) {
+            $object_id = (int) $row['object_id'];
+            $result[$object_id][$row['key']] = $this->decodeMetaValue($row['value']);
+        }
+
+        return $result;
+    }
+
+    protected function decodeMetaValue(mixed $value): mixed {
+        if ($value === null || $value === '') {
+            return $value;
+        }
+
+        if (is_string($value)) {
+            $decoded = json_decode($value, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                return $decoded;
+            }
+
+            // Legacy PHP-serialized scalars/arrays only — never instantiate objects (CWE-502).
+            $unserialized = @unserialize($value, ['allowed_classes' => false]);
+            if (($unserialized !== false || $value === 'b:0;') && !is_object($unserialized)) {
+                return $unserialized;
+            }
+        }
+
+        return $value;
+    }
+
+    protected function decodeJsonValue(mixed $value): mixed {
+        if (is_string($value)) {
+            return $this->decodeMetaValue($value);
+        }
+
+        return $value;
+    }
+
+    /**
+     * Filtra ids da ordem por cotas conforme parâmetros da listagem (ApiQuery só com id).
+     *
+     * @param array $params
+     * @param array<object> $quota_order
+     * @return int[]
+     */
+    public function filterRegistrationIdsMatchingParams(array $params, array $quota_order): array {
+        $filter_params = $params;
+        unset(
+            $filter_params['@order'],
+            $filter_params['@limit'],
+            $filter_params['@page'],
+            $filter_params['__enableQuota'],
+        );
+        $filter_params['@select'] = 'id';
+
+        if (!isset($filter_params['@permissions'])) {
+            $filter_params['@permissions'] = 'view';
+        }
+
+        $query = new ApiQuery(Registration::class, $filter_params);
+        $matching = [];
+        foreach ($query->find() as $row) {
+            $matching[(int) $row['id']] = true;
+        }
+
+        $ids = [];
+        foreach ($quota_order as $reg) {
+            $id = (int) $reg->id;
+            if (isset($matching[$id])) {
+                $ids[] = $id;
+            }
+        }
+
+        return $ids;
     }
 }

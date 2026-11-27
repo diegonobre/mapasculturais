@@ -22,7 +22,7 @@
         <entity-field v-if="hasProponentType && (preview || !registration.proponentType)" :entity="registration" prop="proponentType"></entity-field><br>
         <entity-field v-if="hasRange && (preview || !registration.range)" :entity="registration" prop="range"></entity-field><br>
     </div>
-    <form v-if="preview || isValid" >
+    <form v-if="step && (preview || isValid)" >
         <mc-card v-for="section in sections" class="registration-form__section">
             <template v-if="section.title" #title>
                 {{section.title}}
@@ -46,10 +46,11 @@
                         :disabled="isDisabled(field)"
                         :prop="field.fieldName" 
                         :field-description="field.description" 
-                        :max-length="field.maxSize" 
+                        :max-length="field.maxSize || undefined" 
                         :autosave="60000"
                         description-first
                         :max-options="field?.config?.maxOptions !== undefined && field?.config?.maxOptions !== '' ? Number(field.config.maxOptions) : 0"
+                        :registration-field-configuration="field"
                         preserve-order></entity-field>
 
                     <entity-file v-else-if="field.groupName" 
@@ -59,9 +60,11 @@
                         titleModal="<?php i::_e('Adicionar anexo') ?>" 
                         :title="field.title" 
                         :description="field.description"
-                        editable
+                        :editable="!isDisabled(field)"
+                        showEmpty
                         :required="field.required"
-                        :default-file="field?.template"></entity-file>
+                        :default-file="field?.template"
+                        :allowed-file-types="field.allowedFileTypes || []"></entity-file>
 
                 </template>
             </template>

@@ -1,9 +1,8 @@
 <?php
 
 return [
-//    'auth.provider' => 'Fake',
-
-    'auth.provider' => '\MultipleLocalAuth\Provider',
+    'auth.provider' => 'Fake',
+    // 'auth.provider' => '\MultipleLocalAuth\Provider',
     'auth.config' => [
         'salt' => env('AUTH_SALT', null),
         'wizard' => 'true',
@@ -24,7 +23,8 @@ return [
                 'client_id' => env('AUTH_GOOGLE_CLIENT_ID', null),
                 'client_secret' => env('AUTH_GOOGLE_CLIENT_SECRET', null),
                 'redirect_uri' => '/autenticacao/google/oauth2callback',
-                'scope' => env('AUTH_GOOGLE_SCOPE', 'email'),
+                'scope' => env('AUTH_GOOGLE_SCOPE', 'email profile'),
+                'prompt' => env('AUTH_GOOGLE_PROMPT', null),
             ],
             'Twitter' => [
                 'app_id' => env('AUTH_TWITTER_APP_ID', null),
@@ -32,7 +32,7 @@ return [
             ],
         ]
     ]
- 
+
     //auth.provider' => 'MapasCulturais\AuthProviders\OpauthAuthentik',
     //'auth.config' => [
     //    'salt' => env('AUTH_SALT', 'SECURITY_SALT'),
@@ -41,5 +41,6 @@ return [
     //    'client_secret' => env('AUTH_AUTHENTIK_APP_SECRET', ''),
     //    'scope' => env('AUTH_AUTHENTIK_SCOPE', 'openid profile email'),
     //    'login_url' => env('AUTH_AUTHENTIK_LOGIN_URL', ''),
+    //    'change_password_url' => env('AUTH_AUTHENTIK_CHANGE_PASSWORD_URL', null),
     //]
 ];

@@ -9,9 +9,11 @@ use MapasCulturais\i;
 $this->layout = 'registrations';
 $this->import('
     evaluation-form
+    appeal-previous-evaluation-results
     mc-alert
     mc-breadcrumb
     mc-container
+    mc-icon
     mc-summary-agent
     mc-summary-agent-info
     mc-summary-evaluate
@@ -22,27 +24,83 @@ $this->import('
     registration-evaluation-actions
     registration-evaluation-info
     registration-info
+    registration-details-workplan
+    registration-workplan-form
     v1-embed-tool
 ');
 
-$referer = $app->request->getReferer();
+$showWorkplanForm = $entity->opportunity->isReportingPhase
+    && $entity->opportunity->parent
+    && $entity->opportunity->parent->enableWorkplan;
 
-$breadcrumb = [
-    ['label' => i::__('Início'), 'url' => $app->createUrl('panel', 'opportunities')],
-    ['label' => i::__('Painel de controle'), 'url' => $app->createUrl('panel', 'opportunities')],
-    ['label' => i::__('Minhas Avaliações'), 'url' => $app->createUrl('panel', 'evaluations')],
-    ['label' => i::__('Lista de Avaliações'), 'url' => $referer],
-];
+if ($showWorkplanForm) {
+    $this->import('registration-workplan-form');
+}
 
-$breadcrumb[] = ['label' => i::__('Formulário de avaliação')];
-
-$this->breadcrumb = $breadcrumb;
+if ($entity->opportunity->isAppealPhase) {
+    $parent_registration = $app->repo('registration')->findOneBy([
+        'owner' => $entity->owner->id,
+        'opportunity' => $entity->opportunity->parent->id,
+        'number' => $entity->number
+    ]);
+}
 
 if (isset($this->controller->data['user']) && $entity->opportunity->canUser("@control")) {
     $userEvaluator = $app->repo("User")->find($this->controller->data['user']);
 } else {
     $userEvaluator = $app->user;
 }
+
+// Voltar: lembra a lista de origem (gestão vs avaliador) mesmo após navegar no sidebar
+$opportunity_id = $entity->opportunity->id;
+$back_session_key = "evaluationBackUrl:{$opportunity_id}";
+$all_evaluations_url = $app->createUrl('opportunity', 'allEvaluations', [$opportunity_id]);
+$user_evaluations_url = $app->createUrl('opportunity', 'userEvaluations', [$opportunity_id]);
+
+$referer_raw = $app->request->getReferer();
+$referer = is_array($referer_raw) ? (string) ($referer_raw[0] ?? '') : (string) ($referer_raw ?: '');
+$is_evaluations_list_referer = static function (string $url, int $opportunity_id): bool {
+    if ($url === '') {
+        return false;
+    }
+    $patterns = [
+        "#/lista-de-avaliacoes/(?:id:)?{$opportunity_id}(?:/|\\?|$)#",
+        "#/avaliacoes/(?:id:)?{$opportunity_id}(?:/|\\?|$)#",
+        "#/opportunity/allEvaluations/(?:id:)?{$opportunity_id}(?:/|\\?|$)#",
+        "#/opportunity/userEvaluations/(?:id:)?{$opportunity_id}(?:/|\\?|$)#",
+    ];
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $url)) {
+            return true;
+        }
+    }
+    return false;
+};
+
+if ($is_evaluations_list_referer($referer, $opportunity_id)) {
+    $_SESSION[$back_session_key] = $referer;
+}
+
+if (!empty($_SESSION[$back_session_key])) {
+    $back_url = $_SESSION[$back_session_key];
+} elseif ($entity->opportunity->canUser('@control') && !$userEvaluator->equals($app->user)) {
+    // Gestor manipulando avaliação de outro avaliador → lista gerencial
+    $back_url = $all_evaluations_url;
+} else {
+    // Avaliador (ex.: Vinícius no próprio fluxo) → lista do avaliador
+    $back_url = $user_evaluations_url;
+}
+
+$breadcrumb = [
+    ['label' => i::__('Início'), 'url' => $app->createUrl('panel', 'opportunities')],
+    ['label' => i::__('Painel de controle'), 'url' => $app->createUrl('panel', 'opportunities')],
+    ['label' => i::__('Minhas Avaliações'), 'url' => $app->createUrl('panel', 'evaluations')],
+    ['label' => i::__('Lista de Avaliações'), 'url' => $back_url],
+];
+
+$breadcrumb[] = ['label' => i::__('Formulário de avaliação')];
+
+$this->breadcrumb = $breadcrumb;
 ?>
 
 <div class="main-app registration edit">
@@ -50,11 +108,14 @@ if (isset($this->controller->data['user']) && $entity->opportunity->canUser("@co
     <opportunity-header :opportunity="entity.opportunity">
         <template #title-name>
             <span class="title__title">
-                <a :href="entity.opportunity.getUrl('userEvaluations')">{{entity.opportunity.name}}</a>
+                <a href="<?= htmlspecialchars($back_url) ?>">{{entity.opportunity.name}}</a>
             </span>
         </template>
         <template #button>
-            <mc-link class="button button--primary-outline" :entity="entity.opportunity" route="userEvaluations" icon="arrow-left"><?= i::__("Voltar") ?></mc-link>
+            <a class="button button--primary-outline" href="<?= htmlspecialchars($back_url) ?>">
+                <mc-icon name="arrow-left"></mc-icon>
+                <?= i::__("Voltar") ?>
+            </a>
         </template>
         <template #footer>
             <mc-summary-evaluate></mc-summary-evaluate>
@@ -66,38 +127,86 @@ if (isset($this->controller->data['user']) && $entity->opportunity->canUser("@co
 
     <div class="registration__content">
         <div class="grid-12 registration__grid">
+
             <aside class="col-3">
                 <opportunity-evaluations-list text-button="<?= i::__("Lista de avaliações") ?>" :entity="entity" user-evaluator-id="<?=$userEvaluator->id?>">
                     <v1-embed-tool route="sidebarleftevaluations" :id="entity.id"></v1-embed-tool>
                 </opportunity-evaluations-list>
             </aside>
 
-            <main class="col-5 grid-12">
-                <?php if ($entity->opportunity->evaluationMethod->slug === "documentary") : ?>
-                    <div class="col-12">
-                        <mc-alert type="warning"><?= i::__('Para iniciar a de avaliação documental, selecione um campo de dados abaixo') ?></mc-alert>
-                    </div>
-                <?php endif; ?>
-                <mc-summary-agent :entity="entity" classes="col-12"></mc-summary-agent>
-                <registration-info :registration="entity" classes="col-12"></registration-info>
-                <mc-summary-agent-info :entity="entity" classes="col-12"></mc-summary-agent-info>
-                <h3 class="col-12"><?= i::__('Dados informados no formulário') ?></h3>
-                <mc-summary-spaces :entity="entity" classes="col-12"></mc-summary-spaces>
-                <mc-summary-project :entity="entity" classes="col-12"></mc-summary-project>
-
-
-                <section class="col-12 section">
-                    <div class="col-12">
+            <main class="col-5">
+                <div class="grid-12 v-top">
+                    <?php if ($entity->opportunity->evaluationMethod->slug === "documentary") : ?>
+                        <div class="col-12">
+                            <mc-alert type="warning"><?= i::__('Para iniciar a de avaliação documental, selecione um campo de dados abaixo') ?></mc-alert>
                         </div>
-                        
-                        <div class="section__content">
+                    <?php endif; ?>
+                    <mc-summary-agent :entity="entity" classes="col-12"></mc-summary-agent>
+                    <registration-info :registration="entity" classes="col-12"></registration-info>
+                    <mc-summary-agent-info :entity="entity" classes="col-12"></mc-summary-agent-info>
+
+                    <appeal-previous-evaluation-results></appeal-previous-evaluation-results>
+
+                    <!-- Caso seja uma fase de recurso -->
+                    <section v-if="entity.opportunity?.isAppealPhase" class="col-12 grid-12 section">
+                        <h3 class="col-12"><?= i::__('Recurso') ?></h3>
+
+                        <div class="section__content col-12">
+                            <div class="card owner">
+                                <?php $this->applyTemplateHook("registration-appealPhase-evaluation-view", 'before', ['entity' => $entity]) ?>
+                                    <v1-embed-tool route="registrationevaluationtionformview" iframe-id="evaluation-registration" :id="entity.id"></v1-embed-tool>
+                                <?php $this->applyTemplateHook("registration-appealPhase-evaluation-view", 'after', ['entity' => $entity]) ?>
+                            </div>
+                        </div>
+                    </section>
+
+
+                    <section class="col-12  grid-12 section">
+                        <h3 class="col-12"><?= i::__('Dados informados no formulário') ?></h3>
+                        <mc-summary-spaces :entity="entity" classes="col-12"></mc-summary-spaces>
+                        <mc-summary-project :entity="entity" classes="col-12"></mc-summary-project>
+
+                        <div class="section__content col-12">
                             <div class="card owner">
                             <?php $this->applyTemplateHook("registration-evaluation-view", 'before', ['entity' => $entity]) ?>
-                            <v1-embed-tool route="registrationevaluationtionformview" iframe-id="evaluation-registration" :id="entity.id"></v1-embed-tool>
+                                <?php if ($entity->opportunity->isAppealPhase): ?>
+                                    <v1-embed-tool route="registrationevaluationtionformview" iframe-id="evaluation-registration" id="<?= $parent_registration->id ?>"></v1-embed-tool>
+                                <?php else: ?>
+                                    <v1-embed-tool route="registrationevaluationtionformview" iframe-id="evaluation-registration" :id="entity.id"></v1-embed-tool>
+                                <?php endif; ?>
                             <?php $this->applyTemplateHook("registration-evaluation-view", 'after', ['entity' => $entity]) ?>
+                            </div>
+
+                            <?php if ($showWorkplanForm): ?>
+                                <registration-workplan-form :phase-id="<?= $entity->opportunity->id ?>"></registration-workplan-form>
+                            <?php endif; ?>
                         </div>
-                    </div>
-                </section>
+                    </section>
+
+                    <?php
+                    $firstPhase = $entity->opportunity->firstPhase;
+                    $showWorkplan = false;
+                    if ($firstPhase && $firstPhase->enableWorkplan && !$entity->opportunity->isReportingPhase) {
+                        $avaliableFields = $entity->opportunity->avaliableEvaluationFields ?? [];
+                        foreach ($avaliableFields as $key => $val) {
+                            if (str_starts_with($key, 'workplan_') && $val === "true") {
+                                $showWorkplan = true;
+                                break;
+                            }
+                        }
+                    }
+                    ?>
+                    <?php if ($showWorkplan): ?>
+                    <section class="col-12 grid-12 section">
+                        <h3 class="col-12"><?= i::__('Plano de trabalho') ?></h3>
+                        <div class="section__content col-12">
+                            <div class="card owner">
+                                <registration-details-workplan :registration="entity"></registration-details-workplan>
+                            </div>
+                        </div>
+                    </section>
+                    <?php endif; ?>
+                </div>
             </main>
 
             <aside class="col-4">

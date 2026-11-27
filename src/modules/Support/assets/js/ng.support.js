@@ -195,7 +195,7 @@
             };
 
           
-            if(confirm('Voce realmente deseja remover a relação deste agente?')){
+            if(confirm(MapasCulturais.gettext.support['confirmRemoveAgentRelation'])){
                 SupportService.deleteRelation(MapasCulturais.entity.id, data).success(function (data, status, headers) {
                     $scope.data.agentsRelations.forEach(function (item, index){
                         if(item.agent.id == agentId){
@@ -219,6 +219,22 @@
 
     module.controller('SupportForm',['$scope', 'SupportService','$window', function($scope, SupportService, $window){        
         $scope.userAllowedFields = MapasCulturais.userAllowedFields
+
+        $scope.hasSupportFields = function(fields) {
+            if (!Array.isArray(fields)) {
+                return false;
+            }
+            
+            const allowedAccess = ['ro', 'rw'];
+            for (let field of fields) {
+                const fieldName = field.groupName || field.fieldName;
+                if(MapasCulturais.userAllowedFields && allowedAccess.includes(MapasCulturais.userAllowedFields[fieldName])) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         $scope.canSupportUserEdit = function(field){
             if(MapasCulturais.entity.userHasControl){
